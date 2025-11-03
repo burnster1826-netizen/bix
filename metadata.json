@@ -1,0 +1,5 @@
+{
+  "name": "Copy of PDF Quiz Generator",
+  "description": "An application that transforms a PDF document into an interactive quiz using Gemini AI. Upload a PDF with questions, and the app will automatically generate a multiple-choice quiz for you to take.",
+  "requestFramePermissions": []
+}
