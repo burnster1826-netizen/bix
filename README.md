@@ -4,8 +4,8 @@ This application transforms a PDF or image document into an interactive quiz usi
 
 ## Features
 
-- **File Upload**: Supports PDF and common image formats (PNG, JPG, WebP).
-- **AI-Powered Quiz Generation**: Uses Gemini to analyze the document and create relevant multiple-choice questions.
+- **Multi-File Upload**: Supports combining multiple PDFs and common image formats (PNG, JPG, WebP) into a single quiz.
+- **AI-Powered Quiz Generation**: Uses Gemini to analyze the document(s) and create relevant multiple-choice questions.
 - **Diagram Support**: Identifies questions based on diagrams and displays the relevant cropped image.
 - **Two Quiz Modes**:
     - **Practice Mode**: Take the quiz at your own pace, check answers one by one.

@@ -31,7 +31,7 @@ const quizSchema = {
       },
       diagramBoundingBox: {
         type: Type.OBJECT,
-        description: "If isDiagramBased is true, provide the bounding box of the specific diagram or visual element. The coordinates should be normalized (0-1) relative to the page dimensions.",
+        description: "If isDiagramBased is true, provide a bounding box that encapsulates both the question text and the associated diagram/visual element it refers to. The coordinates should be normalized (0-1) relative to the page dimensions.",
         properties: {
           x: { type: Type.NUMBER, description: "Normalized top-left x-coordinate." },
           y: { type: Type.NUMBER, description: "Normalized top-left y-coordinate." },
