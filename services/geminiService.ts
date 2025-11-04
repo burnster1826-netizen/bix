@@ -51,16 +51,14 @@ const quizSchema = {
 };
 
 export const generateQuiz = async (parts: any[]): Promise<Question[] | null> => {
-  let apiKey: string | undefined;
-
-  // Safely check if 'process' and 'process.env' exist before accessing the API key.
-  // This prevents a ReferenceError that crashes the app in browser-only environments.
-  if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
-    apiKey = process.env.API_KEY;
-  }
+  // The API key is now expected to be injected by the aistudio platform helper,
+  // which makes `process.env.API_KEY` available. This check remains as a safeguard.
+  const apiKey = (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : undefined;
 
   if (!apiKey) {
-    throw new Error("Configuration Error: API key not found. Please set the API_KEY environment variable in your Vercel project settings. For a static site, you may need to use a framework preset like 'Vite' or 'Next.js' to correctly expose environment variables to the browser.");
+    // This error should now rarely be seen by the user, as the UI flow in App.tsx
+    // handles key selection. It serves as a fallback.
+    throw new Error("Configuration Error: API key not found. Please select an API key to continue.");
   }
 
   const ai = new GoogleGenAI({ apiKey });
