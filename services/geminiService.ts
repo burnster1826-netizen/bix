@@ -1,13 +1,11 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Question } from '../types';
 
-const API_KEY = process.env.API_KEY;
-
-if (!API_KEY) {
-  throw new Error("API_KEY environment variable not set");
-}
-
-const ai = new GoogleGenAI({ apiKey: API_KEY });
+// NOTE: API_KEY check and `ai` instantiation are moved into generateQuiz.
+// This prevents the entire application from crashing on load if the API key is not
+// configured, which is the cause of the "blank white screen" on platforms like Vercel.
+// The error is now thrown when the user tries to generate a quiz, and is handled
+// gracefully by the UI.
 
 const quizSchema = {
   type: Type.ARRAY,
@@ -53,24 +51,35 @@ const quizSchema = {
 };
 
 export const generateQuiz = async (parts: any[]): Promise<Question[] | null> => {
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: { parts },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: quizSchema,
-      },
-    });
+  const API_KEY = process.env.API_KEY;
 
-    const jsonText = response.text.trim();
-    const quizData = JSON.parse(jsonText) as Question[];
-    
-    // Validate that options array has >1 item for each question
-    return quizData.filter(q => q.options && q.options.length > 1 && q.question && q.correctAnswer);
-
-  } catch (error) {
-    console.error("Error generating quiz from Gemini:", error);
-    return null;
+  if (!API_KEY) {
+    throw new Error("API key not found. Please set the API_KEY environment variable in your Vercel project settings.");
   }
+
+  const ai = new GoogleGenAI({ apiKey: API_KEY });
+
+  // The try...catch block from the original code is removed. Any errors (including API errors)
+  // will now be caught by the calling function in App.tsx, allowing for specific error 
+  // messages to be displayed in the UI instead of a generic one.
+  const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash",
+    contents: { parts },
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: quizSchema,
+    },
+  });
+
+  const jsonText = response.text.trim();
+  const quizData = JSON.parse(jsonText) as Question[];
+  
+  // Validate that options array has >1 item for each question
+  const validQuestions = quizData.filter(q => q.options && q.options.length > 1 && q.question && q.correctAnswer);
+  
+  if (validQuestions.length === 0) {
+    return null; // This will trigger the "could not generate quiz" message in App.tsx
+  }
+  
+  return validQuestions;
 };
