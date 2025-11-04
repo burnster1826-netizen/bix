@@ -687,20 +687,17 @@ export default function App() {
         toggleFullScreen();
       }
       // The 'Escape' key is handled natively by browsers to exit fullscreen.
-      // We explicitly listen for it here to make the functionality clear and robust.
       if (key === 'escape' && document.fullscreenElement) {
         document.exitFullscreen();
       }
     };
 
-    if (appState === AppState.QUIZ) {
-      window.addEventListener('keydown', handleKeyDown);
-    }
+    window.addEventListener('keydown', handleKeyDown);
 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [appState, toggleFullScreen]);
+  }, [toggleFullScreen]);
 
   const ApiKeySetup: React.FC<{ onApiKeySubmit: (key: string) => void }> = ({ onApiKeySubmit }) => {
     const [localKey, setLocalKey] = useState('');
@@ -1302,7 +1299,7 @@ export default function App() {
     } finally {
         setIsGeneratingPdf(false);
     }
-};
+  };
 
 
   const renderResultsState = () => {
