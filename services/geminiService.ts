@@ -9,7 +9,7 @@ if (!API_KEY) {
 
 const ai = new GoogleGenAI({ apiKey: API_KEY });
 
-const quizOnlySchema = {
+const quizSchema = {
   type: Type.ARRAY,
   items: {
     type: Type.OBJECT,
@@ -28,76 +28,49 @@ const quizOnlySchema = {
       correctAnswer: {
         type: Type.STRING,
         description: "The correct answer from the options array."
+      },
+      isDiagramBased: {
+        type: Type.BOOLEAN,
+        description: "Set to true if the question refers to a diagram, chart, or image that is required to answer it. Default to false."
+      },
+      pageNumber: {
+        type: Type.INTEGER,
+        description: "For multi-page documents, the 1-indexed page number this question is from. For single images, default to 1."
+      },
+      diagramBoundingBox: {
+        type: Type.OBJECT,
+        description: "If isDiagramBased is true, provide the bounding box of the specific diagram or visual element. The coordinates should be normalized (0-1) relative to the page dimensions.",
+        properties: {
+          x: { type: Type.NUMBER, description: "Normalized top-left x-coordinate." },
+          y: { type: Type.NUMBER, description: "Normalized top-left y-coordinate." },
+          width: { type: Type.NUMBER, description: "Normalized width." },
+          height: { type: Type.NUMBER, description: "Normalized height." }
+        }
       }
     },
     required: ["question", "options", "correctAnswer"],
   },
 };
 
-export const generateQuizFromText = async (text: string): Promise<Question[] | null> => {
+export const generateQuiz = async (parts: any[]): Promise<Question[] | null> => {
   try {
-    const prompt = `
-      You are an expert quiz creator. Analyze the following text extracted from a document and generate a multiple-choice quiz based on its content.
-      Ensure the questions cover the key topics in the text. Each question must have exactly four options.
-      The provided text is:
-      ---
-      ${text}
-      ---
-    `;
-
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: prompt,
+      contents: { parts },
       config: {
         responseMimeType: "application/json",
-        responseSchema: quizOnlySchema,
+        responseSchema: quizSchema,
       },
     });
 
     const jsonText = response.text.trim();
     const quizData = JSON.parse(jsonText) as Question[];
     
-    // Validate that options array has 4 items for each question
+    // Validate that options array has >1 item for each question
     return quizData.filter(q => q.options && q.options.length > 1 && q.question && q.correctAnswer);
 
   } catch (error) {
     console.error("Error generating quiz from Gemini:", error);
-    return null;
-  }
-};
-
-export const generateQuizFromImage = async (base64Image: string, mimeType: string): Promise<Question[] | null> => {
-  try {
-    const prompt = `
-      You are an expert quiz creator. Analyze the following image, which contains text and questions, and generate a multiple-choice quiz based on its content.
-      Ensure the questions cover the key topics in the image. Each question must have exactly four options.
-    `;
-
-    const imagePart = {
-      inlineData: {
-        data: base64Image,
-        mimeType: mimeType,
-      },
-    };
-
-    const textPart = { text: prompt };
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash", 
-      contents: { parts: [imagePart, textPart] },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: quizOnlySchema,
-      },
-    });
-
-    const jsonText = response.text.trim();
-    const quizData = JSON.parse(jsonText) as Question[];
-    
-    return quizData.filter(q => q.options && q.options.length > 1 && q.question && q.correctAnswer);
-
-  } catch (error)    {
-    console.error("Error generating quiz from Gemini with image:", error);
     return null;
   }
 };

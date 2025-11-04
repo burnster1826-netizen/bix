@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { AppState, Question, QuizMode, QuestionStatus } from './types';
-import { generateQuizFromText, generateQuizFromImage } from './services/geminiService';
+import { generateQuiz } from './services/geminiService';
 
 // This declaration is necessary because pdfjsLib is loaded from a CDN.
 declare const pdfjsLib: any;
@@ -8,7 +8,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs
 
 
 const FileUploadIcon: React.FC<{className?: string}> = ({ className }) => (
-  <svg className={className} xmlns="http://www.w.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+  <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
     <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l-3.75 3.75M12 9.75l3.75 3.75M3 17.25V6.75a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 6.75v10.5a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 17.25z" />
   </svg>
 );
@@ -50,6 +50,10 @@ export default function App() {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [loadingMessage, setLoadingMessage] = useState<string>('');
+  const [pageImages, setPageImages] = useState<string[]>([]);
+  const [croppedImage, setCroppedImage] = useState<string | null>(null);
+  const [isCropping, setIsCropping] = useState<boolean>(false);
+  const [showFullImageModal, setShowFullImageModal] = useState<boolean>(false);
 
   const [quizMode, setQuizMode] = useState<QuizMode | null>(null);
   const [timer, setTimer] = useState<number | null>(null); // total duration in seconds
@@ -79,6 +83,10 @@ export default function App() {
     setCurrentQuestionIndex(0);
     setError(null);
     setLoadingMessage('');
+    setPageImages([]);
+    setCroppedImage(null);
+    setIsCropping(false);
+    setShowFullImageModal(false);
     setQuizMode(null);
     setTimer(null);
     setTimeLeft(null);
@@ -199,73 +207,6 @@ export default function App() {
     reader.readAsDataURL(file);
   });
   
-  const extractTextFromPdf = async (file: File): Promise<string> => {
-    const reader = new FileReader();
-    return new Promise((resolve, reject) => {
-      reader.onload = async (event) => {
-        if (!event.target?.result) {
-          return reject(new Error("Failed to read file."));
-        }
-        try {
-          const typedArray = new Uint8Array(event.target.result as ArrayBuffer);
-          const pdf = await pdfjsLib.getDocument(typedArray).promise;
-          let textContent = '';
-          for (let i = 1; i <= pdf.numPages; i++) {
-            const page = await pdf.getPage(i);
-            const text = await page.getTextContent();
-            textContent += text.items.map((s: any) => s.str).join(' ');
-          }
-          resolve(textContent);
-        } catch (error) {
-          reject(new Error("Failed to parse PDF content."));
-        }
-      };
-      reader.onerror = () => reject(new Error("Error reading the file."));
-      reader.readAsArrayBuffer(file);
-    });
-  };
-
-  const convertPdfPageToImage = async (file: File, pageNumber: number = 1): Promise<{base64Image: string, mimeType: string}> => {
-    const reader = new FileReader();
-    return new Promise((resolve, reject) => {
-      reader.onload = async (event) => {
-        if (!event.target?.result) {
-          return reject(new Error("Failed to read file for image conversion."));
-        }
-        try {
-          const typedArray = new Uint8Array(event.target.result as ArrayBuffer);
-          const pdf = await pdfjsLib.getDocument(typedArray).promise;
-          
-          if (pageNumber > pdf.numPages) {
-              return reject(new Error("Page number exceeds the number of pages in the PDF."));
-          }
-  
-          const page = await pdf.getPage(pageNumber);
-          const viewport = page.getViewport({ scale: 1.5 });
-  
-          const canvas = document.createElement('canvas');
-          const context = canvas.getContext('2d');
-          if (!context) {
-              return reject(new Error("Could not create canvas context."));
-          }
-          canvas.height = viewport.height;
-          canvas.width = viewport.width;
-  
-          await page.render({ canvasContext: context, viewport: viewport }).promise;
-          
-          const mimeType = 'image/jpeg';
-          const base64Image = canvas.toDataURL(mimeType).split(',')[1];
-          resolve({ base64Image, mimeType });
-  
-        } catch (error) {
-          reject(new Error("Failed to convert PDF page to image."));
-        }
-      };
-      reader.onerror = () => reject(new Error("Error reading the file for image conversion."));
-      reader.readAsArrayBuffer(file);
-    });
-  };
-
   const processFileAndGenerateQuiz = async () => {
     if (!inputFile) {
       setError('No file selected.');
@@ -277,41 +218,59 @@ export default function App() {
 
     try {
       let generatedQuiz: Question[] | null = null;
+      const parts: any[] = [];
+      const localPageImages: string[] = [];
+
+      const basePrompt = `
+        You are an expert quiz creator. Analyze the following document (provided as one or more images) and generate a multiple-choice quiz based on its content.
+        For each question, you MUST provide:
+        1. The question text.
+        2. An array of exactly four options.
+        3. The correct answer.
+        4. A 'pageNumber' (1-indexed) indicating which page the question is from. For single-image documents, this should be 1.
+        5. A boolean flag 'isDiagramBased' set to true ONLY if the question specifically refers to a diagram, chart, or visual element that requires seeing the image to answer. Otherwise, it should be false.
+        6. If 'isDiagramBased' is true, you MUST also provide a 'diagramBoundingBox' object with the normalized (0-1 scale) coordinates (x, y, width, height) of the diagram on the page. If there is no specific diagram, do not include this field.
+      `;
+      parts.push({ text: basePrompt });
       
       if (inputFile.type === 'application/pdf') {
-        setLoadingMessage('Reading your PDF...');
-        let text = '';
-        try {
-          text = await extractTextFromPdf(inputFile);
-        } catch (e) {
-          console.warn("Text extraction failed, will try image conversion.", e);
-          text = ''; // Ensure text is empty to trigger fallback
+        setLoadingMessage('Loading your PDF...');
+        const typedArray = new Uint8Array(await inputFile.arrayBuffer());
+        const pdf = await pdfjsLib.getDocument(typedArray).promise;
+
+        if (pdf.numPages > 10) {
+          throw new Error("This PDF has too many pages. Please use a document with 10 pages or less for best results.");
         }
 
-        if (text.trim().length < 100) { // If text is sparse, fallback to image analysis
-          setLoadingMessage('Text extraction was difficult. Analyzing the document visually...');
-          try {
-            // Process the first page as an image
-            const { base64Image, mimeType } = await convertPdfPageToImage(inputFile, 1);
-            setLoadingMessage('Generating your quiz with Gemini AI...');
-            generatedQuiz = await generateQuizFromImage(base64Image, mimeType);
-          } catch (imageGenError) {
-            console.error("Fallback image generation failed:", imageGenError);
-            throw new Error('The AI could not generate a quiz from this file. Text extraction and image analysis both failed.');
-          }
-        } else {
-          setLoadingMessage('Generating your quiz with Gemini AI...');
-          generatedQuiz = await generateQuizFromText(text);
+        for (let i = 1; i <= pdf.numPages; i++) {
+          setLoadingMessage(`Analyzing page ${i} of ${pdf.numPages}...`);
+          const page = await pdf.getPage(i);
+          const viewport = page.getViewport({ scale: 1.5 });
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          if (!context) throw new Error("Could not create canvas context.");
+          canvas.height = viewport.height;
+          canvas.width = viewport.width;
+          await page.render({ canvasContext: context, viewport: viewport }).promise;
+          const mimeType = 'image/jpeg';
+          const base64Image = canvas.toDataURL(mimeType).split(',')[1];
+          parts.push({ inlineData: { data: base64Image, mimeType } });
+          localPageImages.push(`data:${mimeType};base64,${base64Image}`);
         }
 
       } else if (inputFile.type.startsWith('image/')) {
         setLoadingMessage('Processing your image...');
         const base64Image = await fileToBase64(inputFile);
-        setLoadingMessage('Generating your quiz with Gemini AI...');
-        generatedQuiz = await generateQuizFromImage(base64Image, inputFile.type);
+        parts.push({ inlineData: { data: base64Image, mimeType: inputFile.type } });
+        localPageImages.push(`data:${inputFile.type};base64,${base64Image}`);
+
       } else {
         throw new Error("Unsupported file type.");
       }
+
+      setPageImages(localPageImages);
+      setLoadingMessage('Generating your quiz with Gemini AI...');
+      generatedQuiz = await generateQuiz(parts);
 
       if (generatedQuiz && generatedQuiz.length > 0) {
         setQuiz(generatedQuiz);
@@ -323,13 +282,70 @@ export default function App() {
         setVisitedQuestions(initialVisited);
         setAppState(AppState.QUIZ);
       } else {
-        throw new Error('The AI could not generate a quiz from this file. It might be an image-based PDF or have incompatible formatting.');
+        throw new Error('The AI could not generate a quiz from this file. It might be blank or have incompatible formatting.');
       }
     } catch (err: any) {
       setError(err.message || 'An unexpected error occurred.');
       setAppState(AppState.IDLE);
     }
   };
+
+  const cropImage = useCallback((imageSrc: string, box: { x: number; y: number; width: number; height: number; }): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return reject('Could not get canvas context');
+
+            const sx = box.x * img.width;
+            const sy = box.y * img.height;
+            const sWidth = box.width * img.width;
+            const sHeight = box.height * img.height;
+            
+            if (sWidth <= 0 || sHeight <= 0) return reject('Invalid bounding box dimensions');
+
+            canvas.width = sWidth;
+            canvas.height = sHeight;
+
+            ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
+            resolve(canvas.toDataURL('image/jpeg'));
+        };
+        img.onerror = (err) => reject(err);
+        img.src = imageSrc;
+    });
+  }, []);
+
+  useEffect(() => {
+    const processImage = async () => {
+      if (!quiz) return;
+      
+      const currentQuestion = quiz[currentQuestionIndex];
+      const { isDiagramBased, pageNumber, diagramBoundingBox } = currentQuestion;
+      
+      setCroppedImage(null); // Reset on question change
+
+      if (isDiagramBased && pageNumber && pageImages[pageNumber - 1]) {
+          const fullImageSrc = pageImages[pageNumber - 1];
+          if (diagramBoundingBox) {
+              setIsCropping(true);
+              try {
+                  const croppedSrc = await cropImage(fullImageSrc, diagramBoundingBox);
+                  setCroppedImage(croppedSrc);
+              } catch (error) {
+                  console.error("Failed to crop image, falling back to full image.", error);
+                  setCroppedImage(fullImageSrc); // Fallback to full image on crop error
+              } finally {
+                  setIsCropping(false);
+              }
+          } else {
+              setCroppedImage(fullImageSrc); // Show full image if no bounding box
+          }
+      }
+    };
+    
+    processImage();
+  }, [currentQuestionIndex, quiz, pageImages, cropImage]);
 
   const handleSelectPracticeMode = () => {
     setQuizMode('PRACTICE');
@@ -563,162 +579,190 @@ export default function App() {
     );
     
     return (
-        <div className="w-full h-screen max-w-screen-2xl mx-auto flex flex-col text-gray-800 p-2">
-            {/* Header */}
-            <header className="bg-white rounded-t-lg p-3 flex justify-between items-center border-b border-gray-200">
-                <h1 className="text-xl font-bold">{quizMode === 'JEE' ? 'JEE Mode' : 'Practice Mode'}</h1>
-                {quizMode === 'JEE' && (
-                    <div className="text-right">
-                        <p className="text-sm text-gray-500">Time Left</p>
-                        <p className={`font-mono text-lg ${timeLeft !== null && timeLeft <= 60 ? 'text-red-500 animate-pulse' : 'text-gray-800'}`}>
-                            {timeLeft !== null ? formatTime(timeLeft) : '00:00:00'}
-                        </p>
-                    </div>
-                )}
-                 {quizMode === 'PRACTICE' && (
-                    <div className="text-right">
-                        <p className="text-sm text-gray-500">Time Elapsed</p>
-                        <p className="font-mono text-lg text-gray-800">
-                            {formatTime(stopwatchTime)}
-                        </p>
-                    </div>
-                )}
-            </header>
-            
-            {/* Main Content */}
-            <div className="flex flex-grow bg-gray-100 min-h-0">
-                {/* Left Panel: Question */}
-                <div className="w-3/4 p-6 flex flex-col overflow-y-auto">
-                    <div className="bg-white p-4 rounded-lg mb-4 border border-gray-200">
-                        <h2 className="text-lg font-semibold">Question No. {currentQuestionIndex + 1} of {quiz.length}</h2>
-                    </div>
-                    <div className="flex-grow space-y-5">
-                        <p className="text-xl leading-relaxed">{currentQuestion.question}</p>
-                        <div className="space-y-3">
-                            {currentQuestion.options.map((option, index) => {
-                                const isSelected = userAnswers[currentQuestionIndex] === option;
-                                const isCorrect = option === currentQuestion.correctAnswer;
-                                const isSaved = quizMode === 'PRACTICE' && savedAnswers[currentQuestionIndex];
-                                
-                                let optionClass = `flex items-center p-4 rounded-lg border-2 transition-colors`;
-                                if (showAnswer) {
-                                  if (isCorrect) optionClass += ' bg-green-100 border-green-400';
-                                  else if (isSelected && !isCorrect) optionClass += ' bg-red-100 border-red-400';
-                                  else optionClass += ' bg-white border-gray-300 opacity-60';
-                                } else if (isSaved) {
-                                  if (isSelected) optionClass += ' bg-cyan-100 border-cyan-400 opacity-70';
-                                  else optionClass += ' bg-white border-gray-300 opacity-60';
-                                } else {
-                                  if (isSelected) optionClass += ' bg-cyan-100 border-cyan-400';
-                                  else optionClass += ' bg-white border-gray-300 hover:bg-gray-50 cursor-pointer';
-                                }
-
-                                return (
-                                <label key={index} className={optionClass}>
-                                    <input
-                                        type="radio"
-                                        name="option"
-                                        value={option}
-                                        checked={isSelected}
-                                        onChange={() => handleAnswerSelect(option)}
-                                        className="hidden"
-                                        disabled={showAnswer || isSaved}
+        <>
+            <div className="w-full h-screen max-w-screen-2xl mx-auto flex flex-col text-gray-800 p-2">
+                {/* Header */}
+                <header className="bg-white rounded-t-lg p-3 flex justify-between items-center border-b border-gray-200">
+                    <h1 className="text-xl font-bold">{quizMode === 'JEE' ? 'JEE Mode' : 'Practice Mode'}</h1>
+                    {quizMode === 'JEE' && (
+                        <div className="text-right">
+                            <p className="text-sm text-gray-500">Time Left</p>
+                            <p className={`font-mono text-lg ${timeLeft !== null && timeLeft <= 60 ? 'text-red-500 animate-pulse' : 'text-gray-800'}`}>
+                                {timeLeft !== null ? formatTime(timeLeft) : '00:00:00'}
+                            </p>
+                        </div>
+                    )}
+                    {quizMode === 'PRACTICE' && (
+                        <div className="text-right">
+                            <p className="text-sm text-gray-500">Time Elapsed</p>
+                            <p className="font-mono text-lg text-gray-800">
+                                {formatTime(stopwatchTime)}
+                            </p>
+                        </div>
+                    )}
+                </header>
+                
+                {/* Main Content */}
+                <div className="flex flex-grow bg-gray-100 min-h-0">
+                    {/* Left Panel: Question */}
+                    <div className="w-3/4 p-6 flex flex-col overflow-y-auto">
+                        <div className="bg-white p-4 rounded-lg mb-4 border border-gray-200">
+                            <h2 className="text-lg font-semibold">Question No. {currentQuestionIndex + 1} of {quiz.length}</h2>
+                        </div>
+                        <div className="flex-grow space-y-5">
+                            <p className="text-xl leading-relaxed">{currentQuestion.question}</p>
+                            
+                            {isCropping && <div className="text-center p-4 text-gray-600">Cropping diagram...</div>}
+                            {croppedImage && !isCropping && (
+                                <div className="my-4 p-2 border rounded-lg bg-gray-50 flex flex-col items-center">
+                                    <img 
+                                    src={croppedImage} 
+                                    alt="Question Diagram" 
+                                    className="rounded-md max-w-full h-auto max-h-80 object-contain cursor-pointer transition-transform hover:scale-105"
+                                    onClick={() => setShowFullImageModal(true)}
                                     />
-                                    <div className={`w-6 h-6 rounded-full border-2 flex-shrink-0 mr-4 flex items-center justify-center ${isSelected ? 'border-cyan-500 bg-cyan-500' : 'border-gray-400'}`}>
-                                        {isSelected && <div className="w-2 h-2 bg-white rounded-full"></div>}
-                                    </div>
-                                    <span className="text-lg font-semibold mr-2">{optionLabels[index]})</span>
-                                    <span className="text-lg">{option}</span>
-                                </label>
-                                );
-                            })}
-                        </div>
-                    </div>
-                     <div className="border-t border-gray-300 mt-6 pt-4 flex items-center justify-between">
-                        <div>
-                           <button onClick={quizMode === 'JEE' ? handleMarkAndNext : handleMarkForReview} className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-2 px-4 rounded-lg transition-colors">
-                                {markedQuestions[currentQuestionIndex] ? 'Unmark' : (quizMode === 'JEE' ? 'Mark for Review & Next' : 'Mark for Review')}
-                            </button>
-                             <button onClick={handleClearResponse} className="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg ml-4 transition-colors">
-                                Clear Response
-                            </button>
-                        </div>
-
-                        <div className="flex-1 text-center">
-                          {quizMode === 'PRACTICE' && (
-                            <>
-                              {!savedAnswers[currentQuestionIndex] && (
-                                <button 
-                                  onClick={handleSaveAnswer}
-                                  disabled={!userAnswers[currentQuestionIndex]}
-                                  className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed text-white font-bold py-2 px-6 rounded-lg transition-colors"
-                                >
-                                  Save Answer
-                                </button>
-                              )}
-                              {savedAnswers[currentQuestionIndex] && !showAnswer && (
-                                <button onClick={() => setShowAnswer(true)} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg transition-colors">
-                                  View Answer
-                                </button>
-                              )}
-                            </>
-                          )}
-                        </div>
-                        
-                         <div className="flex items-center gap-4">
-                            <button onClick={goToPrevQuestion} disabled={currentQuestionIndex === 0} className="bg-gray-200 hover:bg-gray-300 disabled:opacity-50 text-gray-800 font-bold py-2 px-6 rounded-lg transition-colors">
-                                Previous
-                            </button>
-                            {currentQuestionIndex === quiz.length - 1 ? (
-                                <button onClick={handleSubmitQuiz} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-lg transition-colors">
-                                Finish & Submit
-                                </button>
-                            ) : (
-                                <button onClick={goToNextQuestion} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-6 rounded-lg transition-colors">
-                                {quizMode === 'JEE' ? 'Save & Next' : 'Next'}
-                                </button>
-                            )}
-                        </div>
-                    </div>
-                </div>
-
-                {/* Right Panel: Palette */}
-                <div className="w-1/4 bg-white p-4 flex flex-col border-l border-gray-200">
-                    <div className="mb-4">
-                        <p className="font-bold mb-3 text-center text-gray-700">Question Palette</p>
-                        <div className="grid grid-cols-2 gap-3 text-gray-600">
-                            <LegendItem color="bg-green-600" text="Answered" />
-                            <LegendItem color="bg-red-600" text="Not Answered" />
-                            <LegendItem color="bg-purple-600" text="Marked" />
-                            <LegendItem color="border border-gray-300" text="Not Visited" />
-                            <LegendItem color="bg-purple-600" text="Answered & Marked" hasIcon={true}/>
-                        </div>
-                    </div>
-                    <div className="flex-grow overflow-y-auto border-t border-b border-gray-200 py-4">
-                        <div className="grid grid-cols-5 gap-2">
-                            {quiz.map((_, index) => {
-                                const status = questionStatuses[index] || 'notVisited';
-                                const isCurrent = index === currentQuestionIndex;
-                                return (
-                                    <button 
-                                        key={index}
-                                        onClick={() => jumpToQuestion(index)}
-                                        className={`w-10 h-10 flex items-center justify-center rounded-lg font-bold transition-transform transform hover:scale-110 ${statusColors[status]} ${isCurrent ? 'ring-2 ring-offset-2 ring-offset-white ring-cyan-400' : ''}`}
-                                    >
-                                        {status === 'answeredAndMarked' ? <CheckIcon className="w-5 h-5 text-white" /> : index + 1}
+                                    <button onClick={() => setShowFullImageModal(true)} className="text-sm text-blue-600 hover:underline mt-2">
+                                    View full page
                                     </button>
-                                );
-                            })}
+                                </div>
+                            )}
+
+                            <div className="space-y-3">
+                                {currentQuestion.options.map((option, index) => {
+                                    const isSelected = userAnswers[currentQuestionIndex] === option;
+                                    const isCorrect = option === currentQuestion.correctAnswer;
+                                    const isSaved = quizMode === 'PRACTICE' && savedAnswers[currentQuestionIndex];
+                                    
+                                    let optionClass = `flex items-center p-4 rounded-lg border-2 transition-colors`;
+                                    if (showAnswer) {
+                                      if (isCorrect) optionClass += ' bg-green-100 border-green-400';
+                                      else if (isSelected && !isCorrect) optionClass += ' bg-red-100 border-red-400';
+                                      else optionClass += ' bg-white border-gray-300 opacity-60';
+                                    } else if (isSaved) {
+                                      if (isSelected) optionClass += ' bg-cyan-100 border-cyan-400 opacity-70';
+                                      else optionClass += ' bg-white border-gray-300 opacity-60';
+                                    } else {
+                                      if (isSelected) optionClass += ' bg-cyan-100 border-cyan-400';
+                                      else optionClass += ' bg-white border-gray-300 hover:bg-gray-50 cursor-pointer';
+                                    }
+
+                                    return (
+                                    <label key={index} className={optionClass}>
+                                        <input
+                                            type="radio"
+                                            name="option"
+                                            value={option}
+                                            checked={isSelected}
+                                            onChange={() => handleAnswerSelect(option)}
+                                            className="hidden"
+                                            disabled={showAnswer || isSaved}
+                                        />
+                                        <div className={`w-6 h-6 rounded-full border-2 flex-shrink-0 mr-4 flex items-center justify-center ${isSelected ? 'border-cyan-500 bg-cyan-500' : 'border-gray-400'}`}>
+                                            {isSelected && <div className="w-2 h-2 bg-white rounded-full"></div>}
+                                        </div>
+                                        <span className="text-lg font-semibold mr-2">{optionLabels[index]})</span>
+                                        <span className="text-lg">{option}</span>
+                                    </label>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                        <div className="border-t border-gray-300 mt-6 pt-4 flex items-center justify-between">
+                            <div>
+                              <button onClick={quizMode === 'JEE' ? handleMarkAndNext : handleMarkForReview} className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-2 px-4 rounded-lg transition-colors">
+                                    {markedQuestions[currentQuestionIndex] ? 'Unmark' : (quizMode === 'JEE' ? 'Mark for Review & Next' : 'Mark for Review')}
+                                </button>
+                                <button onClick={handleClearResponse} className="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg ml-4 transition-colors">
+                                    Clear Response
+                                </button>
+                            </div>
+
+                            <div className="flex-1 text-center">
+                              {quizMode === 'PRACTICE' && (
+                                <>
+                                  {!savedAnswers[currentQuestionIndex] && (
+                                    <button 
+                                      onClick={handleSaveAnswer}
+                                      disabled={!userAnswers[currentQuestionIndex]}
+                                      className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed text-white font-bold py-2 px-6 rounded-lg transition-colors"
+                                    >
+                                      Save Answer
+                                    </button>
+                                  )}
+                                  {savedAnswers[currentQuestionIndex] && !showAnswer && (
+                                    <button onClick={() => setShowAnswer(true)} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg transition-colors">
+                                      View Answer
+                                    </button>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                            
+                            <div className="flex items-center gap-4">
+                                <button onClick={goToPrevQuestion} disabled={currentQuestionIndex === 0} className="bg-gray-200 hover:bg-gray-300 disabled:opacity-50 text-gray-800 font-bold py-2 px-6 rounded-lg transition-colors">
+                                    Previous
+                                </button>
+                                {currentQuestionIndex === quiz.length - 1 ? (
+                                    <button onClick={handleSubmitQuiz} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-lg transition-colors">
+                                    Finish & Submit
+                                    </button>
+                                ) : (
+                                    <button onClick={goToNextQuestion} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-6 rounded-lg transition-colors">
+                                    {quizMode === 'JEE' ? 'Save & Next' : 'Next'}
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     </div>
-                    <div className="mt-4 text-center">
-                        <button onClick={handleSubmitQuiz} className="bg-blue-600 hover:bg-blue-700 w-full text-white font-bold py-3 px-4 rounded-lg transition-colors">
-                            Submit Test
-                        </button>
+
+                    {/* Right Panel: Palette */}
+                    <div className="w-1/4 bg-white p-4 flex flex-col border-l border-gray-200">
+                        <div className="mb-4">
+                            <p className="font-bold mb-3 text-center text-gray-700">Question Palette</p>
+                            <div className="grid grid-cols-2 gap-3 text-gray-600">
+                                <LegendItem color="bg-green-600" text="Answered" />
+                                <LegendItem color="bg-red-600" text="Not Answered" />
+                                <LegendItem color="bg-purple-600" text="Marked" />
+                                <LegendItem color="border border-gray-300" text="Not Visited" />
+                                <LegendItem color="bg-purple-600" text="Answered & Marked" hasIcon={true}/>
+                            </div>
+                        </div>
+                        <div className="flex-grow overflow-y-auto border-t border-b border-gray-200 py-4">
+                            <div className="grid grid-cols-5 gap-2">
+                                {quiz.map((_, index) => {
+                                    const status = questionStatuses[index] || 'notVisited';
+                                    const isCurrent = index === currentQuestionIndex;
+                                    return (
+                                        <button 
+                                            key={index}
+                                            onClick={() => jumpToQuestion(index)}
+                                            className={`w-10 h-10 flex items-center justify-center rounded-lg font-bold transition-transform transform hover:scale-110 ${statusColors[status]} ${isCurrent ? 'ring-2 ring-offset-2 ring-offset-white ring-cyan-400' : ''}`}
+                                        >
+                                            {status === 'answeredAndMarked' ? <CheckIcon className="w-5 h-5 text-white" /> : index + 1}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                        <div className="mt-4 text-center">
+                            <button onClick={handleSubmitQuiz} className="bg-blue-600 hover:bg-blue-700 w-full text-white font-bold py-3 px-4 rounded-lg transition-colors">
+                                Submit Test
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
-        </div>
+            {showFullImageModal && quiz && currentQuestion.pageNumber && (
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setShowFullImageModal(false)}>
+                <img 
+                src={pageImages[currentQuestion.pageNumber - 1]} 
+                alt="Full page view" 
+                className="max-w-full max-h-full object-contain rounded-lg bg-white"
+                onClick={(e) => e.stopPropagation()} // Prevent modal from closing when clicking image
+                />
+            </div>
+            )}
+        </>
     );
   }
 

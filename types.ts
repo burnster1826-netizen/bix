@@ -2,6 +2,14 @@ export interface Question {
   question: string;
   options: string[];
   correctAnswer: string;
+  isDiagramBased?: boolean;
+  pageNumber?: number;
+  diagramBoundingBox?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
 }
 
 export enum AppState {
