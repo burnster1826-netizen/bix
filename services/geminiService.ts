@@ -47,15 +47,13 @@ const quizSchema = {
   },
 };
 
-// Fix: Updated function signature to not accept apiKey, as it will be read from environment variables.
 export const generateQuiz = async (parts: any[]): Promise<Question[] | null> => {
-  // Fix: API key is now read from environment variables as per guidelines.
-  // The guidelines state to assume `process.env.API_KEY` is always available.
+  // API key is read from environment variables as per guidelines.
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
 
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
-    // Fix: The 'contents' property expects an array of Content objects. The 'parts' array should be wrapped in an object and then an array.
+    // The 'contents' property expects an array of Content objects.
     contents: [{ parts }],
     config: {
       responseMimeType: "application/json",

@@ -70,7 +70,6 @@ const SolutionFinder: React.FC<{ question: Question }> = ({ question }) => {
 
 export default function App() {
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
-  // Fix: Removed apiKey state management to comply with guidelines. API key should be handled via environment variables.
   const [inputFiles, setInputFiles] = useState<File[]>([]);
   const [quiz, setQuiz] = useState<Question[] | null>(null);
   const [userAnswers, setUserAnswers] = useState<string[][]>([]); // Array of arrays for multiple answers
@@ -110,6 +109,22 @@ export default function App() {
   const [startPage, setStartPage] = useState<string>('');
   const [endPage, setEndPage] = useState<string>('');
   const [pdfTotalPages, setPdfTotalPages] = useState<number | null>(null);
+  
+  // Paste handler
+  const pasteHandler = useCallback((event: ClipboardEvent) => {
+    handleFiles(event.clipboardData?.files ?? null);
+  }, []);
+
+  useEffect(() => {
+    if (appState === AppState.IDLE) {
+      window.addEventListener('paste', pasteHandler);
+    } else {
+      window.removeEventListener('paste', pasteHandler);
+    }
+    return () => {
+      window.removeEventListener('paste', pasteHandler);
+    };
+  }, [appState, pasteHandler]);
 
   const areArraysEqual = (arr1: string[], arr2: string[]): boolean => {
     if (!arr1 || !arr2 || arr1.length !== arr2.length) return false;
@@ -418,8 +433,6 @@ export default function App() {
         const pageRange = file.type === 'application/pdf' && pdfTotalPages 
           ? { start: numStartPage || 1, end: numEndPage || pdfTotalPages } 
           : undefined;
-        // Fix: The original error points here. While the cause is unclear, a frequent issue is a misconfigured Gemini API call.
-        // We have corrected the API call in `geminiService.ts` and removed local API key handling, which are the most likely root causes.
         const fileResult = await processFileToParts(file, setLoadingMessage, pageRange);
         parts.push(...fileResult.parts);
         localPageImages.push(...fileResult.images);
@@ -427,7 +440,6 @@ export default function App() {
 
       setPageImages(localPageImages);
       setLoadingMessage('Generating your quiz with Gemini AI...');
-      // Fix: Removed apiKey argument as it's now handled by environment variables.
       generatedQuiz = await generateQuiz(parts);
 
       if (generatedQuiz && generatedQuiz.length > 0) {
@@ -449,7 +461,6 @@ export default function App() {
         throw new Error('The AI could not generate a quiz from this file. It might be blank or have incompatible formatting.');
       }
     } catch (err: any) {
-      // Fix: Removed API-key specific error handling.
       setError(err.message || 'An unexpected error occurred.');
       setAppState(AppState.IDLE);
     }
@@ -718,8 +729,6 @@ export default function App() {
     };
   }, [toggleFullScreen]);
 
-  // Fix: Removed ApiKeySetup component as per guidelines.
-
   const renderIdleState = () => {
     return (
     <div 
@@ -811,7 +820,7 @@ export default function App() {
               className={`w-full cursor-pointer bg-white/80 hover:bg-white border-2 border-dashed rounded-xl p-8 flex flex-col items-center justify-center transition-all duration-300 ${isDragging ? 'border-indigo-500 scale-105 shadow-xl' : 'border-gray-300'}`}
             >
               <FileUploadIcon className="w-12 h-12 text-gray-400 mb-4" />
-              <span className="text-gray-700 text-lg font-semibold">Click to upload PDF(s) or Image(s)</span>
+              <span className="text-gray-700 text-lg font-semibold">Click to upload, or paste files</span>
               <span className="text-gray-500 font-normal mt-1">or drag and drop</span>
               <span className="text-xs text-gray-400 mt-2">Max file size: 100MB per file</span>
             </label>
@@ -1430,7 +1439,6 @@ export default function App() {
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50 text-gray-800 flex items-center justify-center p-4">
-      {/* Fix: Removed ternary that showed ApiKeySetup component. The app now renders directly. */}
       {renderContent()}
     </main>
   );
