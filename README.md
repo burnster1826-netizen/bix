@@ -13,24 +13,35 @@ This application transforms a PDF or image document into an interactive quiz usi
 - **Results Analysis**: Get a detailed score breakdown and review your answers.
 - **Static & Serverless**: Runs entirely in the browser, making it easy to deploy.
 
-## Deploying to GitHub Pages
+## Deploying to Netlify
 
-This app is optimized for deployment on static hosting platforms like GitHub Pages.
+This app is optimized for deployment on modern static hosting platforms like Netlify. The process is simple and requires no build configuration.
 
-1.  **Push to GitHub**: Make sure all the code is pushed to your GitHub repository.
+1.  **Push to a Git Repository**: Make sure all your code is pushed to a repository on GitHub, GitLab, or Bitbucket.
 
-2.  **Enable GitHub Pages**:
-    - Go to your repository on GitHub.
-    - Click on the **Settings** tab.
-    - In the left sidebar, click on **Pages**.
-    - Under "Build and deployment", for the **Source**, select **Deploy from a branch**.
-    - Select your branch (e.g., `main`) and the folder (`/ (root)`).
-    - Click **Save**.
+2.  **Sign Up & Connect to Netlify**:
+    - Create a free account on [Netlify](https://www.netlify.com/).
+    - Log in and go to your **Sites** dashboard.
+    - Click **"Add new site"** and then select **"Import an existing project"**.
 
-3.  **Wait for Deployment**: GitHub will start a deployment process. It usually takes a few minutes. Once it's done, you'll see a URL at the top of the Pages settings, like `https://<your-username>.github.io/<your-repo-name>/`.
+3.  **Connect to Your Git Provider**:
+    - Choose the Git provider where your repository is hosted (e.g., GitHub).
+    - Authorize Netlify to access your repositories.
 
-4.  **Use the App**:
-    - Navigate to the provided URL.
+4.  **Select Your Repository**:
+    - Find and select the repository for this quiz generator app.
+
+5.  **Configure Deployment Settings**:
+    - Netlify will automatically detect that this is a static site.
+    - You can leave the deployment settings at their default values:
+        - **Build command**: Leave this field **blank**.
+        - **Publish directory**: This should be the root of your project (it will likely be pre-filled or can be left blank).
+    - Click **"Deploy site"**.
+
+6.  **Wait and Launch**:
+    - Netlify will deploy your site in under a minute.
+    - Once the "Published" badge appears, you can click the URL (e.g., `https://<random-name>.netlify.app`) to see your live app.
+
+7.  **Use the App**:
+    - Your Quiz Generator is now live!
     - The app will ask for your Google AI Studio API key. Paste it in to begin generating quizzes.
-
-That's it! Your Quiz Generator is now live.
