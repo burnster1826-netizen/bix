@@ -47,13 +47,14 @@ const quizSchema = {
   },
 };
 
-export const generateQuiz = async (parts: any[]): Promise<Question[] | null> => {
-  // API key is read from environment variables as per guidelines.
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+export const generateQuiz = async (parts: any[], apiKey: string): Promise<Question[] | null> => {
+  if (!apiKey) {
+    throw new Error("API Key is missing.");
+  }
+  const ai = new GoogleGenAI({ apiKey });
 
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
-    // The 'contents' property expects an array of Content objects.
     contents: [{ parts }],
     config: {
       responseMimeType: "application/json",

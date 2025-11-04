@@ -69,6 +69,8 @@ const SolutionFinder: React.FC<{ question: Question }> = ({ question }) => {
 
 
 export default function App() {
+  const [apiKey, setApiKey] = useState<string>('AIzaSyCKLekmwksDVVapvhhi1RQxR5cLjSj9Yjs');
+  const [isApiKeySet, setIsApiKeySet] = useState<boolean>(true);
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
   const [inputFiles, setInputFiles] = useState<File[]>([]);
   const [quiz, setQuiz] = useState<Question[] | null>(null);
@@ -329,6 +331,12 @@ export default function App() {
       return;
     }
 
+    if (!apiKey) {
+      setError('API Key is not set.');
+      setIsApiKeySet(false); // Go back to API key screen
+      return;
+    }
+
     setAppState(AppState.PROCESSING);
     setError(null);
 
@@ -440,7 +448,7 @@ export default function App() {
 
       setPageImages(localPageImages);
       setLoadingMessage('Generating your quiz with Gemini AI...');
-      generatedQuiz = await generateQuiz(parts);
+      generatedQuiz = await generateQuiz(parts, apiKey);
 
       if (generatedQuiz && generatedQuiz.length > 0) {
         setQuiz(generatedQuiz);
@@ -458,10 +466,10 @@ export default function App() {
             setAppState(AppState.QUIZ);
         }
       } else {
-        throw new Error('The AI could not generate a quiz from this file. It might be blank or have incompatible formatting.');
+        throw new Error('The AI could not generate a quiz from this file. It might be blank, have incompatible formatting, or the API key may be invalid.');
       }
     } catch (err: any) {
-      setError(err.message || 'An unexpected error occurred.');
+      setError(err.message || 'An unexpected error occurred. Please check your API key and try again.');
       setAppState(AppState.IDLE);
     }
   };
@@ -729,6 +737,50 @@ export default function App() {
     };
   }, [toggleFullScreen]);
 
+  const renderApiKeyInputState = () => {
+    return (
+      <div className="w-full max-w-lg mx-auto bg-white rounded-2xl shadow-xl p-8 text-center flex flex-col items-center">
+        <h2 className="text-3xl font-bold text-gray-800 mb-4">Enter API Key</h2>
+        <p className="text-gray-600 mb-6">
+          A default API key has been provided. You can replace it with your own Google AI Studio API key if you wish.
+        </p>
+        <input
+          type="password"
+          value={apiKey}
+          onChange={(e) => {
+            setApiKey(e.target.value);
+            setError(null);
+          }}
+          className="w-full px-4 py-3 text-gray-800 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors mb-4"
+          placeholder="Your API Key"
+          aria-label="API Key Input"
+        />
+        {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
+        <button
+          onClick={() => {
+            if (apiKey.trim()) {
+              setIsApiKeySet(true);
+              setError(null);
+            } else {
+              setError("API Key cannot be empty.");
+            }
+          }}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-all transform hover:scale-105"
+        >
+          Save and Continue
+        </button>
+        <a
+          href="https://aistudio.google.com/app/apikey"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sm text-indigo-600 hover:underline mt-4"
+        >
+          Get your own API Key from Google AI Studio
+        </a>
+      </div>
+    );
+  };
+
   const renderIdleState = () => {
     return (
     <div 
@@ -829,6 +881,11 @@ export default function App() {
         </>
       )}
       {error && <p className="text-red-500 mt-4 font-semibold bg-red-100 p-3 rounded-lg whitespace-pre-line">{error}</p>}
+      <div className="w-full text-center mt-6">
+          <button onClick={() => setIsApiKeySet(false)} className="text-xs text-gray-500 hover:text-indigo-600 font-semibold transition-colors">
+            Change API Key
+          </button>
+      </div>
     </div>
     );
   };
@@ -1420,6 +1477,9 @@ export default function App() {
   };
 
   const renderContent = () => {
+    if (!isApiKeySet) {
+      return renderApiKeyInputState();
+    }
     switch (appState) {
       case AppState.JEE_TIMER_SETUP:
         return renderJeeTimerSetupState();
