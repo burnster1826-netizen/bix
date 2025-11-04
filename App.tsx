@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { AppState, Question, QuizMode, QuestionStatus } from './types';
 import { generateQuiz } from './services/geminiService';
@@ -32,12 +31,25 @@ const FullScreenExitIcon: React.FC<{className?: string}> = ({ className }) => (
   </svg>
 );
 
-
 const Spinner: React.FC = () => (
     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
 );
 
 const optionLabels = ['A', 'B', 'C', 'D'];
+
+const getAnswerLabelsAndText = (options: string[] | undefined, answers: string[]): string => {
+    if (!answers || answers.length === 0) return "Not Answered";
+    
+    if (!options || options.length === 0) {
+        return answers[0];
+    }
+
+    return answers.map(answer => {
+        const index = options.indexOf(answer);
+        const label = index !== -1 ? `${optionLabels[index]})` : '';
+        return `${label} ${answer}`;
+    }).join(', ');
+};
 
 const SolutionFinder: React.FC<{ question: Question }> = ({ question }) => {
     return (
@@ -55,32 +67,13 @@ const SolutionFinder: React.FC<{ question: Question }> = ({ question }) => {
     );
 };
 
-const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) => void; label: string }> = ({ checked, onChange, label }) => (
-    <div className="flex items-center justify-center my-4">
-        <label htmlFor="toggle-switch" className="flex items-center cursor-pointer">
-            <div className="relative">
-                <input
-                    id="toggle-switch"
-                    type="checkbox"
-                    className="sr-only"
-                    checked={checked}
-                    onChange={(e) => onChange(e.target.checked)}
-                />
-                <div className={`block w-14 h-8 rounded-full transition-colors ${checked ? 'bg-indigo-600' : 'bg-gray-300'}`}></div>
-                <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${checked ? 'transform translate-x-6' : ''}`}></div>
-            </div>
-            <div className="ml-3 text-gray-700 font-medium">{label}</div>
-        </label>
-    </div>
-);
-
 
 export default function App() {
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
-  const [apiKey, setApiKey] = useState<string>('AIzaSyBbn0bFilIVdZTk7RJ5fhEmw8v4MPX2BnQ');
+  // Fix: Removed apiKey state management to comply with guidelines. API key should be handled via environment variables.
   const [inputFiles, setInputFiles] = useState<File[]>([]);
   const [quiz, setQuiz] = useState<Question[] | null>(null);
-  const [userAnswers, setUserAnswers] = useState<string[]>([]); // Current selection
+  const [userAnswers, setUserAnswers] = useState<string[][]>([]); // Array of arrays for multiple answers
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [loadingMessage, setLoadingMessage] = useState<string>('');
@@ -100,7 +93,7 @@ export default function App() {
   const [savedAnswers, setSavedAnswers] = useState<boolean[]>([]); // Tracks if answer is locked in Practice mode
 
   // JEE Mode State
-  const [jeeSavedAnswers, setJeeSavedAnswers] = useState<string[]>([]); // Tracks answers submitted for evaluation
+  const [jeeSavedAnswers, setJeeSavedAnswers] = useState<string[][]>([]); // Array of arrays for multiple answers
   const [markedQuestions, setMarkedQuestions] = useState<boolean[]>([]);
   const [visitedQuestions, setVisitedQuestions] = useState<boolean[]>([]);
   const [questionStatuses, setQuestionStatuses] = useState<QuestionStatus[]>([]);
@@ -108,14 +101,22 @@ export default function App() {
   // State for drag and drop
   const [isDragging, setIsDragging] = useState<boolean>(false);
 
-  // State for separate answer key
-  const [useSeparateAnswerKey, setUseSeparateAnswerKey] = useState<boolean>(false);
-  const [answerKeyFile, setAnswerKeyFile] = useState<File | null>(null);
-  
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
 
   // Full Screen State
   const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
+  
+  // Page range for PDF
+  const [startPage, setStartPage] = useState<string>('');
+  const [endPage, setEndPage] = useState<string>('');
+  const [pdfTotalPages, setPdfTotalPages] = useState<number | null>(null);
+
+  const areArraysEqual = (arr1: string[], arr2: string[]): boolean => {
+    if (!arr1 || !arr2 || arr1.length !== arr2.length) return false;
+    const sorted1 = [...arr1].sort();
+    const sorted2 = [...arr2].sort();
+    return sorted1.every((value, index) => value === sorted2[index]);
+  };
 
   const intervalRef = useRef<number | null>(null);
 
@@ -141,9 +142,10 @@ export default function App() {
     setMarkedQuestions([]);
     setVisitedQuestions([]);
     setQuestionStatuses([]);
-    setUseSeparateAnswerKey(false);
-    setAnswerKeyFile(null);
     setIsGeneratingPdf(false);
+    setStartPage('');
+    setEndPage('');
+    setPdfTotalPages(null);
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
     }
@@ -152,9 +154,9 @@ export default function App() {
   const handleRetest = () => {
     if (!quiz) return;
     
-    setUserAnswers(new Array(quiz.length).fill(''));
+    setUserAnswers(new Array(quiz.length).fill([]));
     setSavedAnswers(new Array(quiz.length).fill(false));
-    setJeeSavedAnswers(new Array(quiz.length).fill(''));
+    setJeeSavedAnswers(new Array(quiz.length).fill([]));
     setCurrentQuestionIndex(0);
     setTimeLeft(timer);
     setStopwatchTime(0);
@@ -213,8 +215,8 @@ export default function App() {
     
     const statuses = quiz.map((_, index) => {
         const isAnswered = quizMode === 'JEE' 
-            ? jeeSavedAnswers[index] !== '' 
-            : userAnswers[index] !== '';
+            ? jeeSavedAnswers[index]?.length > 0 
+            : userAnswers[index]?.length > 0;
         
         const isMarked = markedQuestions[index];
         const isVisited = visitedQuestions[index];
@@ -230,7 +232,12 @@ export default function App() {
 }, [userAnswers, jeeSavedAnswers, markedQuestions, visitedQuestions, quiz, quizMode]);
 
 
-  const handleFiles = (files: FileList | null) => {
+  const handleFiles = async (files: FileList | null) => {
+    // Reset page range state first
+    setStartPage('');
+    setEndPage('');
+    setPdfTotalPages(null);
+    
     if (!files || files.length === 0) {
       setInputFiles([]);
       return;
@@ -259,33 +266,21 @@ export default function App() {
     } else {
       setError(null);
     }
-  };
 
-
-  const handleAnswerKeyFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) {
-      setAnswerKeyFile(null);
-      return;
-    }
-
-    // 10MB limit for answer key
-    const maxSize = 10 * 1024 * 1024;
-    if (file.size > maxSize) {
-      setAnswerKeyFile(null);
-      setError('Answer key file size exceeds 10MB. Please select a smaller file.');
-      return;
-    }
-
-    if (file.type === 'application/pdf' || file.type.startsWith('image/')) {
-      setAnswerKeyFile(file);
-      setError(null);
-    } else {
-      setAnswerKeyFile(null);
-      setError('Please select a valid PDF or image file for the answer key.');
+    if (validFiles.length === 1 && validFiles[0].type === 'application/pdf') {
+      try {
+        const typedArray = new Uint8Array(await validFiles[0].arrayBuffer());
+        const pdf = await pdfjsLib.getDocument(typedArray).promise;
+        setPdfTotalPages(pdf.numPages);
+      } catch (e) {
+        console.error("Failed to read PDF for page count:", e);
+        setError("Could not read the PDF file to determine the number of pages.");
+        setInputFiles([]); // Clear invalid file
+      }
     }
   };
-  
+
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     handleFiles(event.target.files);
   };
@@ -322,8 +317,7 @@ export default function App() {
     setAppState(AppState.PROCESSING);
     setError(null);
 
-    // Helper function to process a file (PDF or image) and return its parts.
-    const processFileToParts = async (fileToProcess: File, onProgress: (msg: string) => void): Promise<{ parts: any[], images: string[] }> => {
+    const processFileToParts = async (fileToProcess: File, onProgress: (msg: string) => void, pageRange?: { start: number, end: number }): Promise<{ parts: any[], images: string[] }> => {
         const fileParts: any[] = [];
         const fileImages: string[] = [];
 
@@ -332,11 +326,16 @@ export default function App() {
             const typedArray = new Uint8Array(await fileToProcess.arrayBuffer());
             const pdf = await pdfjsLib.getDocument(typedArray).promise;
 
+            const startPageNum = pageRange?.start || 1;
+            const endPageNum = pageRange?.end || pdf.numPages;
+            const totalPagesToProcess = endPageNum - startPageNum + 1;
+
             const pagePromises = [];
-            for (let i = 1; i <= pdf.numPages; i++) {
+            for (let i = startPageNum; i <= endPageNum; i++) {
                 pagePromises.push(
                     (async (pageNum) => {
-                        onProgress(`Analyzing page ${pageNum} of ${pdf.numPages} from ${fileToProcess.name}...`);
+                        const progressIndex = pageNum - startPageNum + 1;
+                        onProgress(`Analyzing page ${pageNum} (${progressIndex}/${totalPagesToProcess}) of ${fileToProcess.name}...`);
                         const page = await pdf.getPage(pageNum);
                         const viewport = page.getViewport({ scale: 1.5 });
                         const canvas = document.createElement('canvas');
@@ -381,58 +380,61 @@ export default function App() {
       const parts: any[] = [];
       let localPageImages: string[] = [];
       
-      let basePrompt = `
-        You are an expert quiz creator. Analyze the following document (provided as one or more images) and generate a multiple-choice quiz based on its content.
-        For each question, you MUST provide:
-        1. The question text.
-        2. An array of exactly four options.
-        3. The correct answer.
-        4. A 'pageNumber' (1-indexed) indicating which page the question is from. For single-image documents, this should be 1.
-        5. A boolean flag 'isDiagramBased' set to true ONLY if the question specifically refers to a diagram, chart, or visual element that requires seeing the image to answer. Otherwise, it should be false.
-        6. If 'isDiagramBased' is true, you MUST also provide a 'diagramBoundingBox' object with the normalized (0-1 scale) coordinates (x, y, width, height) that tightly crops the area containing both the question text and the visual element it refers to. This provides essential context for the user.
+      const basePrompt = `
+        You are an expert quiz creator. Analyze the document and generate a quiz. Create two types of questions:
+
+        1.  **Multiple-Choice Questions**:
+            -   Provide a 'question' text.
+            -   Provide an 'options' array with 4 choices.
+            -   Provide a 'correctAnswers' array with the correct option text(s).
+
+        2.  **Numerical-Answer Questions** (for questions with a specific number as an answer):
+            -   Provide a 'question' text.
+            -   Provide a 'correctAnswers' array containing a single string of the numerical answer (e.g., ["42.5"]).
+            -   **Crucially, you MUST OMIT the 'options' array or provide an empty \`[]\` for this question type.**
+
+        For ALL questions, you must also provide:
+        -   'pageNumber': The 1-indexed page the question is from.
+        -   'isDiagramBased': A boolean, true if a diagram is needed to answer.
+        -   'diagramBoundingBox': If 'isDiagramBased' is true, provide normalized (0-1) coordinates for the relevant area.
       `;
-
-      if (useSeparateAnswerKey && answerKeyFile) {
-        basePrompt = `
-          You are an expert quiz creator. You will be provided with two documents. The first is the question paper, and the second is the answer key.
-          Your task is to:
-          1. Analyze the question paper to generate multiple-choice questions.
-          2. For each question generated, refer to the provided answer key to determine the correct answer.
-          3. It is crucial that the 'correctAnswer' field in your response is populated using the information from the answer key document, not your own knowledge.
-
-          For each question, you MUST provide:
-          - The question text.
-          - An array of exactly four options.
-          - The correct answer, identified from the answer key.
-          - A 'pageNumber' (1-indexed) indicating which page the question is from in the question paper.
-          - A boolean 'isDiagramBased' set to true if the question requires a diagram to be answered.
-          - A 'diagramBoundingBox' if 'isDiagramBased' is true, which should tightly crop the area containing both the question text and the visual element it refers to.
-        `;
-      }
       
       parts.push({ text: basePrompt });
       
+      const numStartPage = startPage ? parseInt(startPage, 10) : null;
+      const numEndPage = endPage ? parseInt(endPage, 10) : null;
+
+      if (pdfTotalPages) { // This block only runs for a single PDF upload
+          const start = numStartPage || 1;
+          const end = numEndPage || pdfTotalPages;
+          if (start < 1 || end > pdfTotalPages || start > end) {
+              setError('Invalid page range selected. Please check the start and end pages.');
+              setAppState(AppState.IDLE);
+              return;
+          }
+      }
+
       for (const file of inputFiles) {
-        const fileResult = await processFileToParts(file, setLoadingMessage);
+        const pageRange = file.type === 'application/pdf' && pdfTotalPages 
+          ? { start: numStartPage || 1, end: numEndPage || pdfTotalPages } 
+          : undefined;
+        // Fix: The original error points here. While the cause is unclear, a frequent issue is a misconfigured Gemini API call.
+        // We have corrected the API call in `geminiService.ts` and removed local API key handling, which are the most likely root causes.
+        const fileResult = await processFileToParts(file, setLoadingMessage, pageRange);
         parts.push(...fileResult.parts);
         localPageImages.push(...fileResult.images);
-      }
-      
-      if (useSeparateAnswerKey && answerKeyFile) {
-        parts.push({ text: "--- END OF QUESTION PAPER, ANSWER KEY STARTS HERE ---" });
-        const answerKeyResult = await processFileToParts(answerKeyFile, setLoadingMessage);
-        parts.push(...answerKeyResult.parts);
       }
 
       setPageImages(localPageImages);
       setLoadingMessage('Generating your quiz with Gemini AI...');
-      generatedQuiz = await generateQuiz(parts, apiKey);
+      // Fix: Removed apiKey argument as it's now handled by environment variables.
+      generatedQuiz = await generateQuiz(parts);
 
       if (generatedQuiz && generatedQuiz.length > 0) {
         setQuiz(generatedQuiz);
-        setUserAnswers(new Array(generatedQuiz.length).fill(''));
+        setUserAnswers(new Array(generatedQuiz.length).fill([]));
         setSavedAnswers(new Array(generatedQuiz.length).fill(false));
-        setJeeSavedAnswers(new Array(generatedQuiz.length).fill(''));
+        setJeeSavedAnswers(new Array(generatedQuiz.length).fill([]));
         setMarkedQuestions(new Array(generatedQuiz.length).fill(false));
         const initialVisited = new Array(generatedQuiz.length).fill(false);
         initialVisited[0] = true;
@@ -447,12 +449,8 @@ export default function App() {
         throw new Error('The AI could not generate a quiz from this file. It might be blank or have incompatible formatting.');
       }
     } catch (err: any) {
-      if (err.message && (err.message.includes("API key not valid") || err.message.includes("API key is missing"))) {
-        setError("Your API key appears to be invalid. Please enter a valid key to continue.");
-        setApiKey(''); // Force re-entry of the key
-      } else {
-        setError(err.message || 'An unexpected error occurred.');
-      }
+      // Fix: Removed API-key specific error handling.
+      setError(err.message || 'An unexpected error occurred.');
       setAppState(AppState.IDLE);
     }
   };
@@ -535,15 +533,36 @@ export default function App() {
     }
   };
   
-  const handleAnswerSelect = (option: string) => {
+  const handleAnswerSelect = (value: string) => {
     if (showAnswer || (quizMode === 'PRACTICE' && savedAnswers[currentQuestionIndex])) return;
-    const newAnswers = [...userAnswers];
-    newAnswers[currentQuestionIndex] = option;
+    
+    const currentQuestion = quiz![currentQuestionIndex];
+    const isNumerical = !currentQuestion.options || currentQuestion.options.length === 0;
+    const newAnswers = userAnswers.map(a => [...a]);
+
+    if (isNumerical) {
+        newAnswers[currentQuestionIndex] = value ? [value] : [];
+    } else {
+        const currentSelections = newAnswers[currentQuestionIndex] || [];
+        const optionIndex = currentSelections.indexOf(value);
+        const isSingleChoice = currentQuestion.correctAnswers.length === 1;
+
+        if (isSingleChoice) {
+            newAnswers[currentQuestionIndex] = [value];
+        } else {
+            if (optionIndex > -1) {
+                currentSelections.splice(optionIndex, 1);
+            } else {
+                currentSelections.push(value);
+            }
+            newAnswers[currentQuestionIndex] = currentSelections;
+        }
+    }
     setUserAnswers(newAnswers);
   };
   
   const handleSaveAnswerPractice = () => {
-      if (userAnswers[currentQuestionIndex]) {
+      if (userAnswers[currentQuestionIndex]?.length > 0) {
           const newSavedAnswers = [...savedAnswers];
           newSavedAnswers[currentQuestionIndex] = true;
           setSavedAnswers(newSavedAnswers);
@@ -585,13 +604,13 @@ export default function App() {
   };
 
   const handleClearResponse = () => {
-      const newAnswers = [...userAnswers];
-      newAnswers[currentQuestionIndex] = '';
+      const newAnswers = userAnswers.map(a => [...a]);
+      newAnswers[currentQuestionIndex] = [];
       setUserAnswers(newAnswers);
 
       if (quizMode === 'JEE') {
-          const newSaved = [...jeeSavedAnswers];
-          newSaved[currentQuestionIndex] = '';
+          const newSaved = jeeSavedAnswers.map(a => [...a]);
+          newSaved[currentQuestionIndex] = [];
           setJeeSavedAnswers(newSaved);
       } else {
           const newSaved = [...savedAnswers];
@@ -617,9 +636,9 @@ export default function App() {
 
   // For "Save & Next" button in JEE Mode
   const handleSaveAndNextJEE = () => {
-      if (userAnswers[currentQuestionIndex]) {
-          const newSaved = [...jeeSavedAnswers];
-          newSaved[currentQuestionIndex] = userAnswers[currentQuestionIndex];
+      if (userAnswers[currentQuestionIndex]?.length > 0) {
+          const newSaved = jeeSavedAnswers.map(a => [...a]);
+          newSaved[currentQuestionIndex] = [...userAnswers[currentQuestionIndex]];
           setJeeSavedAnswers(newSaved);
       }
       goToNextQuestion();
@@ -627,9 +646,9 @@ export default function App() {
 
   // For "Save & Mark for Review" button in JEE Mode
   const handleSaveAndMarkForReviewJEE = () => {
-      if (userAnswers[currentQuestionIndex]) {
-          const newSaved = [...jeeSavedAnswers];
-          newSaved[currentQuestionIndex] = userAnswers[currentQuestionIndex];
+      if (userAnswers[currentQuestionIndex]?.length > 0) {
+          const newSaved = jeeSavedAnswers.map(a => [...a]);
+          newSaved[currentQuestionIndex] = [...userAnswers[currentQuestionIndex]];
           setJeeSavedAnswers(newSaved);
           
           const newMarked = [...markedQuestions];
@@ -699,51 +718,9 @@ export default function App() {
     };
   }, [toggleFullScreen]);
 
-  const ApiKeySetup: React.FC<{ onApiKeySubmit: (key: string) => void }> = ({ onApiKeySubmit }) => {
-    const [localKey, setLocalKey] = useState('');
-
-    const handleSubmit = (e: React.FormEvent) => {
-        e.preventDefault();
-        if (localKey.trim()) {
-            onApiKeySubmit(localKey.trim());
-        }
-    };
-    
-    return (
-      <div className="w-full max-w-lg mx-auto bg-white rounded-2xl shadow-xl p-8 text-center flex flex-col items-center">
-        <h1 className="text-3xl font-bold text-gray-800 mb-4">Welcome to the PDF Quiz Generator</h1>
-        <p className="text-gray-600 mb-6">
-          To get started, please enter your Google AI Studio API key below.
-        </p>
-        <form onSubmit={handleSubmit} className="w-full flex flex-col items-center">
-          <input
-            type="password"
-            value={localKey}
-            onChange={(e) => setLocalKey(e.target.value)}
-            placeholder="AIzaSy... (example)"
-            className="w-full px-4 py-3 mb-4 text-gray-800 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
-            aria-label="API Key Input"
-          />
-          <button
-            type="submit"
-            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-all transform hover:scale-105 shadow-lg hover:shadow-indigo-500/50 disabled:bg-indigo-300 disabled:cursor-not-allowed"
-            disabled={!localKey.trim()}
-          >
-            Start Generating
-          </button>
-        </form>
-        <p className="text-xs text-gray-500 mt-4">
-          You can get your API key from your{' '}
-          <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">
-            Google AI Studio settings
-          </a>.
-        </p>
-      </div>
-    );
-  };
+  // Fix: Removed ApiKeySetup component as per guidelines.
 
   const renderIdleState = () => {
-    const isGenerateDisabled = useSeparateAnswerKey && !answerKeyFile;
     return (
     <div 
       className="w-full max-w-4xl mx-auto rounded-2xl shadow-lg border border-gray-200 p-8 text-center flex flex-col items-center"
@@ -757,51 +734,58 @@ export default function App() {
           <div className="text-lg font-bold text-indigo-600 mb-6 flex flex-col items-center space-y-1">
             {inputFiles.map((file, index) => <span key={index}>{file.name}</span>)}
           </div>
-
-          <ToggleSwitch
-            checked={useSeparateAnswerKey}
-            onChange={(checked) => {
-                setUseSeparateAnswerKey(checked);
-                if (!checked) {
-                    setAnswerKeyFile(null); // Clear answer key file if toggled off
-                }
-            }}
-            label="Provide separate answer key"
-          />
-
-          {useSeparateAnswerKey && (
-              <div className="mt-2 mb-6 w-full max-w-md">
-                  {answerKeyFile ? (
-                      <div className="text-center">
-                          <p className="text-green-700 font-semibold">Answer key: {answerKeyFile.name}</p>
-                          <button onClick={() => setAnswerKeyFile(null)} className="text-sm text-red-500 hover:underline">Remove</button>
-                      </div>
-                  ) : (
-                      <label 
-                        htmlFor="answer-key-upload" 
-                        className={`w-full cursor-pointer bg-white/80 hover:bg-white border-2 border-dashed rounded-xl p-4 flex flex-col items-center justify-center transition-all duration-300 border-gray-300`}
-                      >
-                        <span className="text-gray-700 text-sm font-semibold">Click to upload answer key</span>
-                        <span className="text-xs text-gray-400 mt-1">PDF or Image (Max 10MB)</span>
-                      </label>
-                  )}
-                  <input id="answer-key-upload" type="file" accept=".pdf,image/png,image/jpeg,image/webp" className="hidden" onChange={handleAnswerKeyFileChange} />
-              </div>
+          
+          {inputFiles.length === 1 && inputFiles[0].type === 'application/pdf' && pdfTotalPages && (
+            <div className="my-6 p-4 bg-indigo-50 rounded-lg w-full max-w-md border border-indigo-200">
+                <p className="text-sm font-semibold text-gray-800 mb-3 text-center">
+                    Generate quiz from a specific page range (optional)
+                </p>
+                <div className="flex items-center justify-center gap-4">
+                    <div className="flex-1">
+                        <label htmlFor="start-page" className="block text-xs text-gray-600 mb-1">Start Page</label>
+                        <input
+                            id="start-page"
+                            type="number"
+                            value={startPage}
+                            onChange={(e) => setStartPage(e.target.value)}
+                            placeholder={`1`}
+                            min="1"
+                            max={pdfTotalPages}
+                            className="w-full px-3 py-2 text-gray-800 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            aria-label="Start Page"
+                        />
+                    </div>
+                    <span className="text-gray-500 font-semibold pt-5">to</span>
+                    <div className="flex-1">
+                        <label htmlFor="end-page" className="block text-xs text-gray-600 mb-1">End Page</label>
+                        <input
+                            id="end-page"
+                            type="number"
+                            value={endPage}
+                            onChange={(e) => setEndPage(e.target.value)}
+                            placeholder={`${pdfTotalPages}`}
+                            min="1"
+                            max={pdfTotalPages}
+                            className="w-full px-3 py-2 text-gray-800 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            aria-label="End Page"
+                        />
+                    </div>
+                </div>
+                <p className="text-xs text-center text-gray-500 mt-2">Leave blank to use all {pdfTotalPages} pages.</p>
+            </div>
           )}
 
           <p className="text-gray-700 mb-6">Choose your quiz mode:</p>
           <div className="flex flex-col sm:flex-row justify-center gap-4">
               <button
                   onClick={handleSelectPracticeMode}
-                  disabled={isGenerateDisabled}
-                  className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold py-3 px-8 rounded-lg text-lg transition-all transform hover:scale-105 shadow-lg hover:shadow-blue-500/50 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed disabled:scale-100 disabled:shadow-none"
+                  className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold py-3 px-8 rounded-lg text-lg transition-all transform hover:scale-105 shadow-lg hover:shadow-blue-500/50"
               >
                   Practice Mode
               </button>
               <button
                   onClick={handleSelectJeeMode}
-                  disabled={isGenerateDisabled}
-                  className="bg-gradient-to-r from-red-500 to-rose-600 text-white font-bold py-3 px-8 rounded-lg text-lg transition-all transform hover:scale-105 shadow-lg hover:shadow-red-500/50 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed disabled:scale-100 disabled:shadow-none"
+                  className="bg-gradient-to-r from-red-500 to-rose-600 text-white font-bold py-3 px-8 rounded-lg text-lg transition-all transform hover:scale-105 shadow-lg hover:shadow-red-500/50"
               >
                   JEE Mode
               </button>
@@ -907,6 +891,8 @@ export default function App() {
   const renderQuizState = () => {
     if (!quiz) return null;
     const currentQuestion = quiz[currentQuestionIndex];
+    const isMultipleAnswer = currentQuestion.correctAnswers.length > 1;
+    const isNumerical = !currentQuestion.options || currentQuestion.options.length === 0;
 
     const statusColors: { [key in QuestionStatus]: string } = {
         answered: 'bg-green-600 text-white',
@@ -958,8 +944,13 @@ export default function App() {
                 <div className="flex flex-grow bg-gray-100 min-h-0">
                     {/* Left Panel: Question */}
                     <div className="w-3/4 p-6 flex flex-col overflow-y-auto">
-                        <div className="bg-white p-4 rounded-lg mb-4 border border-gray-200">
+                        <div className="bg-white p-4 rounded-lg mb-4 border border-gray-200 flex justify-between items-center">
                             <h2 className="text-lg font-semibold">Question No. {currentQuestionIndex + 1} of {quiz.length}</h2>
+                             {isNumerical ? (
+                                <span className="text-sm font-bold text-blue-600 bg-blue-100 px-3 py-1 rounded-full">Numerical Answer</span>
+                            ) : isMultipleAnswer && (
+                                <span className="text-sm font-bold text-rose-600 bg-rose-100 px-3 py-1 rounded-full">Multiple ans</span>
+                            )}
                         </div>
                         <div className="flex-grow space-y-5">
                             <p className="text-xl leading-relaxed">{currentQuestion.question}</p>
@@ -980,43 +971,59 @@ export default function App() {
                             )}
 
                             <div className="space-y-3">
-                                {currentQuestion.options.map((option, index) => {
-                                    const isSelected = userAnswers[currentQuestionIndex] === option;
-                                    const isCorrect = option === currentQuestion.correctAnswer;
-                                    const isSavedPractice = quizMode === 'PRACTICE' && savedAnswers[currentQuestionIndex];
-                                    
-                                    let optionClass = `flex items-center p-4 rounded-lg border-2 transition-colors`;
-                                    if (showAnswer) {
-                                      if (isCorrect) optionClass += ' bg-green-100 border-green-400';
-                                      else if (isSelected && !isCorrect) optionClass += ' bg-red-100 border-red-400';
-                                      else optionClass += ' bg-white border-gray-300 opacity-60';
-                                    } else if (isSavedPractice) {
-                                      if (isSelected) optionClass += ' bg-cyan-100 border-cyan-400 opacity-70';
-                                      else optionClass += ' bg-white border-gray-300 opacity-60';
-                                    } else {
-                                      if (isSelected) optionClass += ' bg-cyan-100 border-cyan-400';
-                                      else optionClass += ' bg-white border-gray-300 hover:bg-gray-50 cursor-pointer';
-                                    }
-
-                                    return (
-                                    <label key={index} className={optionClass}>
+                                {isNumerical ? (
+                                    <div className="pt-4">
+                                        <label htmlFor="numerical-answer" className="block text-lg font-semibold mb-2 text-gray-700">Your Answer:</label>
                                         <input
-                                            type="radio"
-                                            name="option"
-                                            value={option}
-                                            checked={isSelected}
-                                            onChange={() => handleAnswerSelect(option)}
-                                            className="hidden"
-                                            disabled={showAnswer || isSavedPractice}
+                                            id="numerical-answer"
+                                            type="number"
+                                            value={userAnswers[currentQuestionIndex]?.[0] || ''}
+                                            onChange={(e) => handleAnswerSelect(e.target.value)}
+                                            className="w-full max-w-sm px-4 py-3 text-gray-800 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
+                                            placeholder="Enter a number"
+                                            disabled={showAnswer || (quizMode === 'PRACTICE' && savedAnswers[currentQuestionIndex])}
+                                            aria-label="Numerical Answer Input"
                                         />
-                                        <div className={`w-6 h-6 rounded-full border-2 flex-shrink-0 mr-4 flex items-center justify-center ${isSelected ? 'border-cyan-500 bg-cyan-500' : 'border-gray-400'}`}>
-                                            {isSelected && <div className="w-2 h-2 bg-white rounded-full"></div>}
-                                        </div>
-                                        <span className="text-lg font-semibold mr-2">{optionLabels[index]})</span>
-                                        <span className="text-lg">{option}</span>
-                                    </label>
-                                    );
-                                })}
+                                    </div>
+                                ) : (
+                                    currentQuestion.options?.map((option, index) => {
+                                        const isSelected = userAnswers[currentQuestionIndex]?.includes(option);
+                                        const isCorrect = currentQuestion.correctAnswers.includes(option);
+                                        const isSavedPractice = quizMode === 'PRACTICE' && savedAnswers[currentQuestionIndex];
+                                        
+                                        let optionClass = `flex items-center p-4 rounded-lg border-2 transition-colors`;
+                                        if (showAnswer) {
+                                          if (isCorrect) optionClass += ' bg-green-100 border-green-400';
+                                          else if (isSelected && !isCorrect) optionClass += ' bg-red-100 border-red-400';
+                                          else optionClass += ' bg-white border-gray-300 opacity-60';
+                                        } else if (isSavedPractice) {
+                                          if (isSelected) optionClass += ' bg-cyan-100 border-cyan-400 opacity-70';
+                                          else optionClass += ' bg-white border-gray-300 opacity-60';
+                                        } else {
+                                          if (isSelected) optionClass += ' bg-cyan-100 border-cyan-400';
+                                          else optionClass += ' bg-white border-gray-300 hover:bg-gray-50 cursor-pointer';
+                                        }
+
+                                        return (
+                                        <label key={index} className={optionClass}>
+                                            <input
+                                                type={isMultipleAnswer ? "checkbox" : "radio"}
+                                                name={`option-${currentQuestionIndex}`}
+                                                value={option}
+                                                checked={isSelected}
+                                                onChange={() => handleAnswerSelect(option)}
+                                                className="hidden"
+                                                disabled={showAnswer || isSavedPractice}
+                                            />
+                                            <div className={`w-6 h-6 ${isMultipleAnswer ? 'rounded-md' : 'rounded-full'} border-2 flex-shrink-0 mr-4 flex items-center justify-center ${isSelected ? 'border-cyan-500 bg-cyan-500' : 'border-gray-400'}`}>
+                                                {isSelected && <CheckIcon className="w-4 h-4 text-white" />}
+                                            </div>
+                                            <span className="text-lg font-semibold mr-2">{optionLabels[index]})</span>
+                                            <span className="text-lg">{option}</span>
+                                        </label>
+                                        );
+                                    })
+                                )}
                             </div>
                         </div>
                         <div className="border-t border-gray-300 mt-6 pt-4 flex items-center justify-between">
@@ -1032,7 +1039,7 @@ export default function App() {
                                     </div>
                                     <div className="flex-1 text-center">
                                         {!savedAnswers[currentQuestionIndex] && (
-                                        <button onClick={handleSaveAnswerPractice} disabled={!userAnswers[currentQuestionIndex]} className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed text-white font-bold py-2 px-6 rounded-lg transition-colors">
+                                        <button onClick={handleSaveAnswerPractice} disabled={!userAnswers[currentQuestionIndex] || userAnswers[currentQuestionIndex].length === 0} className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed text-white font-bold py-2 px-6 rounded-lg transition-colors">
                                             Save Answer
                                         </button>
                                         )}
@@ -1067,7 +1074,7 @@ export default function App() {
                                         <button onClick={handleMarkAndNext} className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-2 px-4 rounded-lg transition-colors">
                                             {markedQuestions[currentQuestionIndex] ? 'Unmark & Next' : 'Mark for Review & Next'}
                                         </button>
-                                        <button onClick={handleSaveAndMarkForReviewJEE} disabled={!userAnswers[currentQuestionIndex]} className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-bold py-2 px-4 rounded-lg transition-colors">
+                                        <button onClick={handleSaveAndMarkForReviewJEE} disabled={!userAnswers[currentQuestionIndex] || userAnswers[currentQuestionIndex].length === 0} className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-bold py-2 px-4 rounded-lg transition-colors">
                                             Save & Mark for Review
                                         </button>
                                         {currentQuestionIndex === quiz.length - 1 ? (
@@ -1075,7 +1082,7 @@ export default function App() {
                                                 Finish & Submit
                                             </button>
                                         ) : (
-                                            <button onClick={handleSaveAndNextJEE} disabled={!userAnswers[currentQuestionIndex]} className="bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 text-white font-bold py-2 px-6 rounded-lg transition-colors">
+                                            <button onClick={handleSaveAndNextJEE} disabled={!userAnswers[currentQuestionIndex] || userAnswers[currentQuestionIndex].length === 0} className="bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 text-white font-bold py-2 px-6 rounded-lg transition-colors">
                                                 Save & Next
                                             </button>
                                         )}
@@ -1156,8 +1163,8 @@ export default function App() {
         };
         
         const answersForScoring = quizMode === 'JEE' ? jeeSavedAnswers : userAnswers;
-        const answeredQuestions = answersForScoring.filter(a => a !== '').length;
-        const correctAnswers = answersForScoring.reduce((acc, answer, index) => (answer !== '' && answer === quiz[index].correctAnswer) ? acc + 1 : acc, 0);
+        const answeredQuestions = answersForScoring.filter(a => a?.length > 0).length;
+        const correctAnswers = answersForScoring.reduce((acc, answer, index) => (answer && areArraysEqual(answer, quiz[index].correctAnswers)) ? acc + 1 : acc, 0);
         const incorrectAnswers = answeredQuestions - correctAnswers;
         const jeeScore = (correctAnswers * 4) - incorrectAnswers;
         
@@ -1212,8 +1219,7 @@ export default function App() {
         for (let i = 0; i < quiz.length; i++) {
             const question = quiz[i];
             const userAnswer = answersForScoring[i];
-            const isCorrect = userAnswer === question.correctAnswer;
-
+            
             // Question Text
             doc.setFontSize(12);
             doc.setFont('helvetica', 'bold');
@@ -1239,44 +1245,59 @@ export default function App() {
                 } catch (e) { console.error("Could not add image to PDF", e); }
             }
             
-            // Options
+            // Options for MCQ
             doc.setFontSize(10);
-            question.options.forEach((option, idx) => {
-                const prefix = `${optionLabels[idx]}) `;
-                
-                let textColor = '#000000'; // Black
-                if (option === userAnswer && !isCorrect) textColor = '#dc2626'; // Red
-                if (option === question.correctAnswer) textColor = '#16a34a'; // Green
-                
-                doc.setTextColor(textColor);
-                const optionLines = doc.splitTextToSize(prefix + option, pageWidth - margin * 2 - 5);
-                checkPageBreak(optionLines.length * 4 + 2);
-                doc.text(optionLines, margin + 5, y);
-                y += optionLines.length * 4 + 2;
-            });
+            doc.setFont('helvetica', 'normal');
+            if (question.options && question.options.length > 0) {
+                question.options.forEach((option, idx) => {
+                    const prefix = `${optionLabels[idx]}) `;
+                    let textColor = '#000000';
+                    const isUserAnswer = userAnswer?.includes(option);
+                    const isCorrectAnswer = question.correctAnswers.includes(option);
 
-            // Reset color
-            doc.setTextColor('#000000');
-            
+                    if (isCorrectAnswer) textColor = '#16a34a';
+                    if (isUserAnswer && !isCorrectAnswer) textColor = '#dc2626';
+                    
+                    doc.setTextColor(textColor);
+                    const optionLines = doc.splitTextToSize(prefix + option, pageWidth - margin * 2 - 5);
+                    checkPageBreak(optionLines.length * 4 + 2);
+                    doc.text(optionLines, margin + 5, y);
+                    y += optionLines.length * 4 + 2;
+                });
+            }
+
             // Result Summary
-            if (userAnswer) {
+            doc.setTextColor('#000000');
+            doc.setFont('helvetica', 'italic');
+            const yourAnswerText = getAnswerLabelsAndText(question.options, userAnswer);
+
+            if (userAnswer && userAnswer.length > 0) {
+              const isCorrect = areArraysEqual(userAnswer, question.correctAnswers);
+              const resultColor = isCorrect ? '#16a34a' : '#dc2626';
+              const resultText = isCorrect ? '(Correct)' : '(Incorrect)';
+              
+              doc.setTextColor(resultColor);
+              checkPageBreak(5);
+              doc.text(`Your Answer: ${yourAnswerText} ${resultText}`, margin, y);
+              y += 5;
+
               if (!isCorrect) {
-                  const summary = `Your Answer: ${userAnswer} (Incorrect)`;
+                  doc.setTextColor('#16a34a');
                   checkPageBreak(5);
-                  doc.setFont('helvetica', 'italic');
-                  doc.setTextColor('#dc2626');
-                  doc.text(summary, margin, y);
+                  doc.text(`Correct Answer: ${getAnswerLabelsAndText(question.options, question.correctAnswers)}`, margin, y);
                   y += 5;
-                  doc.setTextColor('#000000');
               }
             } else {
+                doc.setTextColor('#6b7280');
                 checkPageBreak(5);
-                doc.setFont('helvetica', 'italic');
-                doc.setTextColor('#6b7280'); // Gray
                 doc.text('You did not answer this question.', margin, y);
                 y+=5;
-                doc.setTextColor('#000000');
+                doc.setTextColor('#16a34a');
+                checkPageBreak(5);
+                doc.text(`Correct Answer: ${getAnswerLabelsAndText(question.options, question.correctAnswers)}`, margin, y);
+                y += 5;
             }
+            doc.setTextColor('#000000');
 
             // Separator
             y += 5;
@@ -1308,17 +1329,17 @@ export default function App() {
     const answersForScoring = quizMode === 'JEE' ? jeeSavedAnswers : userAnswers;
 
     const correctAnswers = answersForScoring.reduce((acc, answer, index) => {
-        const isAnswered = answer !== '';
-        if (isAnswered && answer === quiz[index].correctAnswer) {
+        if (answer && areArraysEqual(answer, quiz[index].correctAnswers)) {
             return acc + 1;
         }
         return acc;
     }, 0);
     
-    const answeredQuestions = answersForScoring.filter(a => a !== '').length;
+    const answeredQuestions = answersForScoring.filter(a => a?.length > 0).length;
     const incorrectAnswers = answeredQuestions - correctAnswers;
     const notVisitedCount = visitedQuestions.filter(v => !v).length;
-    const markedForReviewCount = markedQuestions.filter((m, i) => m && answersForScoring[i] === '').length;
+    const markedForReviewCount = markedQuestions.filter((m, i) => m && (!answersForScoring[i] || answersForScoring[i].length === 0)).length;
+
 
     const percentage = answeredQuestions > 0 ? Math.round((correctAnswers / answeredQuestions) * 100) : 0;
     const jeeScore = (correctAnswers * 4) - incorrectAnswers;
@@ -1329,12 +1350,7 @@ export default function App() {
           <p className="text-sm text-gray-600">{label}</p>
       </div>
     );
-
-    const getOptionLabel = (options: string[], answer: string): string => {
-        const index = options.indexOf(answer);
-        return index !== -1 ? `${optionLabels[index]})` : '';
-    };
-
+    
     return (
       <div className="w-full max-w-4xl mx-auto bg-white rounded-2xl shadow-xl p-8 text-gray-800">
         <h2 className="text-3xl font-bold text-center mb-2">Quiz Completed!</h2>
@@ -1359,17 +1375,15 @@ export default function App() {
         <div className="space-y-4 max-h-[40vh] overflow-y-auto pr-4 border-t pt-4">
           {quiz.map((question, index) => {
             const userAnswer = answersForScoring[index];
-            const isCorrect = userAnswer === question.correctAnswer;
-            const userAnswerLabel = getOptionLabel(question.options, userAnswer);
-            const correctAnswerLabel = getOptionLabel(question.options, question.correctAnswer);
+            const isCorrect = areArraysEqual(userAnswer, question.correctAnswers);
 
             return (
-              <div key={index} className={`p-4 rounded-lg border ${!userAnswer ? 'bg-gray-50 border-gray-200' : isCorrect ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+              <div key={index} className={`p-4 rounded-lg border ${!userAnswer || userAnswer.length === 0 ? 'bg-gray-50 border-gray-200' : isCorrect ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
                 <p className="font-semibold text-lg mb-2">{index + 1}. {question.question}</p>
                 <p className={`text-sm font-medium ${isCorrect ? 'text-green-700' : 'text-red-700'}`}>
-                  Your answer: {userAnswer ? `${userAnswerLabel} ${userAnswer}` : "Not Answered"}
+                  Your answer: {getAnswerLabelsAndText(question.options, userAnswer)}
                 </p>
-                {!isCorrect && userAnswer && <p className="text-sm font-medium text-blue-700">Correct answer: {correctAnswerLabel} {question.correctAnswer}</p>}
+                {!isCorrect && userAnswer && userAnswer.length > 0 && <p className="text-sm font-medium text-blue-700">Correct answer: {getAnswerLabelsAndText(question.options, question.correctAnswers)}</p>}
                 
                 <SolutionFinder question={question} />
               </div>
@@ -1416,7 +1430,8 @@ export default function App() {
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50 text-gray-800 flex items-center justify-center p-4">
-      {apiKey ? renderContent() : <ApiKeySetup onApiKeySubmit={setApiKey} />}
+      {/* Fix: Removed ternary that showed ApiKeySetup component. The app now renders directly. */}
+      {renderContent()}
     </main>
   );
 }

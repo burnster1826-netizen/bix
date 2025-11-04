@@ -1,7 +1,7 @@
 export interface Question {
   question: string;
-  options: string[];
-  correctAnswer: string;
+  options?: string[];
+  correctAnswers: string[];
   isDiagramBased?: boolean;
   pageNumber?: number;
   diagramBoundingBox?: {

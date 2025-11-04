@@ -15,11 +15,14 @@ const quizSchema = {
         items: {
           type: Type.STRING,
         },
-        description: "An array of 4 multiple-choice options."
+        description: "An array of 4 multiple-choice options. For questions requiring a numerical answer, this array should be empty or omitted."
       },
-      correctAnswer: {
-        type: Type.STRING,
-        description: "The correct answer from the options array."
+      correctAnswers: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.STRING,
+        },
+        description: "An array containing the correct answer(s). For multiple-choice, this contains the correct option text(s). For numerical questions, this contains a single string with the correct number."
       },
       isDiagramBased: {
         type: Type.BOOLEAN,
@@ -40,20 +43,20 @@ const quizSchema = {
         }
       }
     },
-    required: ["question", "options", "correctAnswer"],
+    required: ["question", "correctAnswers"],
   },
 };
 
-export const generateQuiz = async (parts: any[], apiKey: string): Promise<Question[] | null> => {
-  if (!apiKey) {
-    throw new Error("API key is missing. Please provide a valid API key.");
-  }
-
-  const ai = new GoogleGenAI({ apiKey });
+// Fix: Updated function signature to not accept apiKey, as it will be read from environment variables.
+export const generateQuiz = async (parts: any[]): Promise<Question[] | null> => {
+  // Fix: API key is now read from environment variables as per guidelines.
+  // The guidelines state to assume `process.env.API_KEY` is always available.
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
 
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
-    contents: { parts },
+    // Fix: The 'contents' property expects an array of Content objects. The 'parts' array should be wrapped in an object and then an array.
+    contents: [{ parts }],
     config: {
       responseMimeType: "application/json",
       responseSchema: quizSchema,
@@ -61,13 +64,32 @@ export const generateQuiz = async (parts: any[], apiKey: string): Promise<Questi
   });
 
   const jsonText = response.text.trim();
-  const quizData = JSON.parse(jsonText) as Question[];
+  const parsedData = JSON.parse(jsonText);
   
-  // Validate that options array has >1 item for each question
-  const validQuestions = quizData.filter(q => q.options && q.options.length > 1 && q.question && q.correctAnswer);
+  if (!Array.isArray(parsedData)) {
+    throw new Error("AI response is not in the expected format.");
+  }
+
+  const quizData: Question[] = parsedData.map((q: any) => ({
+    ...q,
+    correctAnswers: q.correctAnswers 
+        ? (Array.isArray(q.correctAnswers) ? q.correctAnswers : [q.correctAnswers]) 
+        : (q.correctAnswer ? [q.correctAnswer] : [])
+  }));
+  
+  const validQuestions = quizData.filter(q => {
+    const commonValid = q.question && q.correctAnswers && q.correctAnswers.length > 0;
+    if (!commonValid) return false;
+
+    if (q.options && q.options.length > 0) { // Multiple choice
+      return q.options.length > 1; 
+    } else { // Numerical answer
+      return true;
+    }
+  });
   
   if (validQuestions.length === 0) {
-    return null; // This will trigger the "could not generate quiz" message in App.tsx
+    return null;
   }
   
   return validQuestions;
