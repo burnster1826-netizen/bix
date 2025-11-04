@@ -51,18 +51,20 @@ const quizSchema = {
 };
 
 export const generateQuiz = async (parts: any[]): Promise<Question[] | null> => {
-  // Check for the existence of process.env, which is not available in browser environments
-  // without a build tool. This provides a clearer error message to the user.
-  if (typeof process === 'undefined' || !process.env || !process.env.API_KEY) {
-    throw new Error("Configuration Error: API key not found. This application requires an API_KEY environment variable. If you've set it in your Vercel project, ensure you're using a framework preset (like Vite or Next.js) that exposes environment variables to the client-side. For static sites, a build step is necessary to inject these variables.");
+  let apiKey: string | undefined;
+
+  // Safely check if 'process' and 'process.env' exist before accessing the API key.
+  // This prevents a ReferenceError that crashes the app in browser-only environments.
+  if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+    apiKey = process.env.API_KEY;
   }
 
-  const API_KEY = process.env.API_KEY;
-  const ai = new GoogleGenAI({ apiKey: API_KEY });
+  if (!apiKey) {
+    throw new Error("Configuration Error: API key not found. Please set the API_KEY environment variable in your Vercel project settings. For a static site, you may need to use a framework preset like 'Vite' or 'Next.js' to correctly expose environment variables to the browser.");
+  }
 
-  // The try...catch block from the original code is removed. Any errors (including API errors)
-  // will now be caught by the calling function in App.tsx, allowing for specific error 
-  // messages to be displayed in the UI instead of a generic one.
+  const ai = new GoogleGenAI({ apiKey });
+
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
     contents: { parts },
