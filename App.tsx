@@ -6,17 +6,6 @@ import { generateQuiz } from './services/geminiService';
 declare const pdfjsLib: any;
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
 
-// FIX: Resolved `window.aistudio` type conflict by defining and using a named `AIStudio` interface, as suggested by the error message.
-interface AIStudio {
-  hasSelectedApiKey: () => Promise<boolean>;
-  openSelectKey: () => Promise<void>;
-}
-declare global {
-  interface Window {
-    aistudio: AIStudio;
-  }
-}
-
 const FileUploadIcon: React.FC<{className?: string}> = ({ className }) => (
   <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
     <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l-3.75 3.75M12 9.75l3.75 3.75M3 17.25V6.75a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 6.75v10.5a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 17.25z" />
@@ -54,7 +43,7 @@ const SolutionFinder: React.FC<{ question: Question }> = ({ question }) => {
 
 export default function App() {
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
-  const [apiKeyReady, setApiKeyReady] = useState<boolean>(false);
+  const [apiKey, setApiKey] = useState<string>('');
   const [inputFile, setInputFile] = useState<File | null>(null);
   const [quiz, setQuiz] = useState<Question[] | null>(null);
   const [userAnswers, setUserAnswers] = useState<string[]>([]);
@@ -83,29 +72,6 @@ export default function App() {
   const [isDragging, setIsDragging] = useState<boolean>(false);
 
   const intervalRef = useRef<number | null>(null);
-
-
-  useEffect(() => {
-    const checkApiKey = async () => {
-      // The `window.aistudio` object is provided by the platform.
-      // It's the standard way to handle API key selection.
-      if (window.aistudio) {
-        const hasKey = await window.aistudio.hasSelectedApiKey();
-        setApiKeyReady(hasKey);
-      }
-    };
-    checkApiKey();
-  }, []);
-
-  const handleSelectKey = async () => {
-    if (window.aistudio) {
-      await window.aistudio.openSelectKey();
-      // Assume success and update UI immediately to avoid race conditions.
-      // The Gemini service will validate the key on the first API call.
-      setApiKeyReady(true);
-    }
-  };
-
 
   const resetState = useCallback(() => {
     setAppState(AppState.IDLE);
@@ -303,7 +269,7 @@ export default function App() {
 
       setPageImages(localPageImages);
       setLoadingMessage('Generating your quiz with Gemini AI...');
-      generatedQuiz = await generateQuiz(parts);
+      generatedQuiz = await generateQuiz(parts, apiKey);
 
       if (generatedQuiz && generatedQuiz.length > 0) {
         setQuiz(generatedQuiz);
@@ -318,10 +284,9 @@ export default function App() {
         throw new Error('The AI could not generate a quiz from this file. It might be blank or have incompatible formatting.');
       }
     } catch (err: any) {
-      // Handle invalid API key error specifically
-      if (err.message && err.message.includes("Requested entity was not found.")) {
-        setError("Your API key appears to be invalid. Please select a valid key to continue.");
-        setApiKeyReady(false); // Force re-selection of the key
+      if (err.message && (err.message.includes("API key not valid") || err.message.includes("API key is missing"))) {
+        setError("Your API key appears to be invalid. Please enter a valid key to continue.");
+        setApiKey(''); // Force re-entry of the key
       } else {
         setError(err.message || 'An unexpected error occurred.');
       }
@@ -493,26 +458,48 @@ export default function App() {
     return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const renderApiKeySetup = () => (
-    <div className="w-full max-w-lg mx-auto bg-white rounded-2xl shadow-xl p-8 text-center flex flex-col items-center">
-      <h1 className="text-3xl font-bold text-gray-800 mb-4">Welcome to the PDF Quiz Generator</h1>
-      <p className="text-gray-600 mb-6">
-        To get started, you'll need to select a Google AI Studio API key. This is required to generate quizzes.
-      </p>
-      <button
-        onClick={handleSelectKey}
-        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-all transform hover:scale-105 shadow-lg hover:shadow-indigo-500/50"
-      >
-        Select API Key
-      </button>
-      <p className="text-xs text-gray-500 mt-4">
-        Project billing information can be found at{' '}
-        <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">
-          ai.google.dev/gemini-api/docs/billing
-        </a>.
-      </p>
-    </div>
-  );
+  const ApiKeySetup: React.FC<{ onApiKeySubmit: (key: string) => void }> = ({ onApiKeySubmit }) => {
+    const [localKey, setLocalKey] = useState('');
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (localKey.trim()) {
+            onApiKeySubmit(localKey.trim());
+        }
+    };
+    
+    return (
+      <div className="w-full max-w-lg mx-auto bg-white rounded-2xl shadow-xl p-8 text-center flex flex-col items-center">
+        <h1 className="text-3xl font-bold text-gray-800 mb-4">Welcome to the PDF Quiz Generator</h1>
+        <p className="text-gray-600 mb-6">
+          To get started, please enter your Google AI Studio API key below.
+        </p>
+        <form onSubmit={handleSubmit} className="w-full flex flex-col items-center">
+          <input
+            type="password"
+            value={localKey}
+            onChange={(e) => setLocalKey(e.target.value)}
+            placeholder="Enter your API key"
+            className="w-full px-4 py-3 mb-4 text-gray-800 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
+            aria-label="API Key Input"
+          />
+          <button
+            type="submit"
+            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-all transform hover:scale-105 shadow-lg hover:shadow-indigo-500/50 disabled:bg-indigo-300 disabled:cursor-not-allowed"
+            disabled={!localKey.trim()}
+          >
+            Start Generating
+          </button>
+        </form>
+        <p className="text-xs text-gray-500 mt-4">
+          You can get your API key from your{' '}
+          <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">
+            Google AI Studio settings
+          </a>.
+        </p>
+      </div>
+    );
+  };
 
   const renderIdleState = () => (
     <div 
@@ -929,7 +916,7 @@ export default function App() {
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50 text-gray-800 flex items-center justify-center p-4">
-      {apiKeyReady ? renderContent() : renderApiKeySetup()}
+      {apiKey ? renderContent() : <ApiKeySetup onApiKeySubmit={setApiKey} />}
     </main>
   );
 }

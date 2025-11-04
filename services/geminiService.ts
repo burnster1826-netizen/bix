@@ -1,12 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Question } from '../types';
 
-// NOTE: API_KEY check and `ai` instantiation are moved into generateQuiz.
-// This prevents the entire application from crashing on load if the API key is not
-// configured, which is the cause of the "blank white screen" on platforms like Vercel.
-// The error is now thrown when the user tries to generate a quiz, and is handled
-// gracefully by the UI.
-
 const quizSchema = {
   type: Type.ARRAY,
   items: {
@@ -50,15 +44,9 @@ const quizSchema = {
   },
 };
 
-export const generateQuiz = async (parts: any[]): Promise<Question[] | null> => {
-  // The API key is now expected to be injected by the aistudio platform helper,
-  // which makes `process.env.API_KEY` available. This check remains as a safeguard.
-  const apiKey = (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : undefined;
-
+export const generateQuiz = async (parts: any[], apiKey: string): Promise<Question[] | null> => {
   if (!apiKey) {
-    // This error should now rarely be seen by the user, as the UI flow in App.tsx
-    // handles key selection. It serves as a fallback.
-    throw new Error("Configuration Error: API key not found. Please select an API key to continue.");
+    throw new Error("API key is missing. Please provide a valid API key.");
   }
 
   const ai = new GoogleGenAI({ apiKey });

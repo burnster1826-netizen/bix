@@ -1,20 +1,36 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# PDF Quiz Generator
 
-# Run and deploy your AI Studio app
+This application transforms a PDF or image document into an interactive quiz using the Gemini AI API. Upload a file, and the app will automatically generate a multiple-choice quiz for you to take, with both "Practice" and "JEE" (timed) modes.
 
-This contains everything you need to run your app locally.
+## Features
 
-View your app in AI Studio: https://ai.studio/apps/drive/1prYOv0n5oCEuS__YWC-klklXHuKjJH7K
+- **File Upload**: Supports PDF and common image formats (PNG, JPG, WebP).
+- **AI-Powered Quiz Generation**: Uses Gemini to analyze the document and create relevant multiple-choice questions.
+- **Diagram Support**: Identifies questions based on diagrams and displays the relevant cropped image.
+- **Two Quiz Modes**:
+    - **Practice Mode**: Take the quiz at your own pace, check answers one by one.
+    - **JEE Mode**: A timed exam simulation with a question palette for navigation.
+- **Results Analysis**: Get a detailed score breakdown and review your answers.
+- **Static & Serverless**: Runs entirely in the browser, making it easy to deploy.
 
-## Run Locally
+## Deploying to GitHub Pages
 
-**Prerequisites:**  Node.js
+This app is optimized for deployment on static hosting platforms like GitHub Pages.
 
+1.  **Push to GitHub**: Make sure all the code is pushed to your GitHub repository.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+2.  **Enable GitHub Pages**:
+    - Go to your repository on GitHub.
+    - Click on the **Settings** tab.
+    - In the left sidebar, click on **Pages**.
+    - Under "Build and deployment", for the **Source**, select **Deploy from a branch**.
+    - Select your branch (e.g., `main`) and the folder (`/ (root)`).
+    - Click **Save**.
+
+3.  **Wait for Deployment**: GitHub will start a deployment process. It usually takes a few minutes. Once it's done, you'll see a URL at the top of the Pages settings, like `https://<your-username>.github.io/<your-repo-name>/`.
+
+4.  **Use the App**:
+    - Navigate to the provided URL.
+    - The app will ask for your Google AI Studio API key. Paste it in to begin generating quizzes.
+
+That's it! Your Quiz Generator is now live.
