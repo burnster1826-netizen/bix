@@ -782,7 +782,7 @@ export default function App() {
     const notVisitedCount = visitedQuestions.filter(v => !v).length;
     const markedForReviewCount = markedQuestions.filter((m, i) => m && userAnswers[i] === '').length;
 
-    const percentage = quiz.length > 0 ? Math.round((correctAnswers / answeredQuestions) * 100) : 0;
+    const percentage = answeredQuestions > 0 ? Math.round((correctAnswers / answeredQuestions) * 100) : 0;
     const jeeScore = (correctAnswers * 4) - incorrectAnswers;
 
     const StatCard: React.FC<{label:string, value: number | string, color: string}> = ({label, value, color}) => (

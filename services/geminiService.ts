@@ -51,12 +51,13 @@ const quizSchema = {
 };
 
 export const generateQuiz = async (parts: any[]): Promise<Question[] | null> => {
-  const API_KEY = process.env.API_KEY;
-
-  if (!API_KEY) {
-    throw new Error("API key not found. Please set the API_KEY environment variable in your Vercel project settings.");
+  // Check for the existence of process.env, which is not available in browser environments
+  // without a build tool. This provides a clearer error message to the user.
+  if (typeof process === 'undefined' || !process.env || !process.env.API_KEY) {
+    throw new Error("Configuration Error: API key not found. This application requires an API_KEY environment variable. If you've set it in your Vercel project, ensure you're using a framework preset (like Vite or Next.js) that exposes environment variables to the client-side. For static sites, a build step is necessary to inject these variables.");
   }
 
+  const API_KEY = process.env.API_KEY;
   const ai = new GoogleGenAI({ apiKey: API_KEY });
 
   // The try...catch block from the original code is removed. Any errors (including API errors)
