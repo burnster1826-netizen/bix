@@ -16,6 +16,7 @@ export enum AppState {
   IDLE,
   JEE_TIMER_SETUP,
   PROCESSING,
+  QUIZ_READY,
   QUIZ,
   RESULTS,
 }

@@ -10,6 +10,9 @@ This application transforms a PDF or image document into an interactive quiz usi
 - **Two Quiz Modes**:
     - **Practice Mode**: Take the quiz at your own pace, check answers one by one.
     - **JEE Mode**: A timed exam simulation with a question palette for navigation.
+- **Full Screen Mode**: An immersive, distraction-free mode for taking tests. In JEE Mode, full screen is enabled automatically. Keyboard shortcuts:
+    - Press **`f`** to enter or exit full screen.
+    - Press **`Esc`** to exit full screen.
 - **Results Analysis**: Get a detailed score breakdown and review your answers.
 - **Static & Serverless**: Runs entirely in the browser, making it easy to deploy.
 

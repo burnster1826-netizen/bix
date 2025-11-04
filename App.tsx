@@ -20,6 +20,19 @@ const CheckIcon: React.FC<{className?: string}> = ({ className }) => (
   </svg>
 );
 
+const FullScreenEnterIcon: React.FC<{className?: string}> = ({ className }) => (
+  <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+  </svg>
+);
+
+const FullScreenExitIcon: React.FC<{className?: string}> = ({ className }) => (
+  <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9V4.5M15 9h4.5M15 9l5.25-5.25M15 15v4.5M15 15h4.5M15 15l5.25 5.25" />
+  </svg>
+);
+
+
 const Spinner: React.FC = () => (
     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
 );
@@ -101,6 +114,9 @@ export default function App() {
   
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
 
+  // Full Screen State
+  const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
+
   const intervalRef = useRef<number | null>(null);
 
   const resetState = useCallback(() => {
@@ -155,6 +171,12 @@ export default function App() {
         clearInterval(intervalRef.current);
     }
     
+    if (quizMode === 'JEE') {
+      document.documentElement.requestFullscreen().catch(err => {
+        console.error(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+      });
+    }
+
     setAppState(AppState.QUIZ);
   };
 
@@ -310,25 +332,38 @@ export default function App() {
             const typedArray = new Uint8Array(await fileToProcess.arrayBuffer());
             const pdf = await pdfjsLib.getDocument(typedArray).promise;
 
-            if (pdf.numPages > 10) {
-                throw new Error(`The file "${fileToProcess.name}" has too many pages. Please use a document with 10 pages or less.`);
-            }
-
+            const pagePromises = [];
             for (let i = 1; i <= pdf.numPages; i++) {
-                onProgress(`Analyzing page ${i} of ${pdf.numPages} from ${fileToProcess.name}...`);
-                const page = await pdf.getPage(i);
-                const viewport = page.getViewport({ scale: 1.5 });
-                const canvas = document.createElement('canvas');
-                const context = canvas.getContext('2d');
-                if (!context) throw new Error("Could not create canvas context.");
-                canvas.height = viewport.height;
-                canvas.width = viewport.width;
-                await page.render({ canvasContext: context, viewport: viewport }).promise;
-                const mimeType = 'image/jpeg';
-                const base64Image = canvas.toDataURL(mimeType).split(',')[1];
-                fileParts.push({ inlineData: { data: base64Image, mimeType } });
-                fileImages.push(`data:${mimeType};base64,${base64Image}`);
+                pagePromises.push(
+                    (async (pageNum) => {
+                        onProgress(`Analyzing page ${pageNum} of ${pdf.numPages} from ${fileToProcess.name}...`);
+                        const page = await pdf.getPage(pageNum);
+                        const viewport = page.getViewport({ scale: 1.5 });
+                        const canvas = document.createElement('canvas');
+                        const context = canvas.getContext('2d');
+                        if (!context) throw new Error("Could not create canvas context.");
+                        canvas.height = viewport.height;
+                        canvas.width = viewport.width;
+                        await page.render({ canvasContext: context, viewport: viewport }).promise;
+                        const mimeType = 'image/jpeg';
+                        const quality = 0.9;
+                        const base64Image = canvas.toDataURL(mimeType, quality).split(',')[1];
+                        return { 
+                            part: { inlineData: { data: base64Image, mimeType } }, 
+                            image: `data:${mimeType};base64,${base64Image}`,
+                            pageNum: pageNum
+                        };
+                    })(i)
+                );
             }
+            const processedPages = await Promise.all(pagePromises);
+            processedPages.sort((a,b) => a.pageNum - b.pageNum); // Ensure order
+            
+            processedPages.forEach(p => {
+                fileParts.push(p.part);
+                fileImages.push(p.image);
+            });
+
         } else if (fileToProcess.type.startsWith('image/')) {
             onProgress(`Processing image ${fileToProcess.name}...`);
             const base64Image = await fileToBase64(fileToProcess);
@@ -402,7 +437,12 @@ export default function App() {
         const initialVisited = new Array(generatedQuiz.length).fill(false);
         initialVisited[0] = true;
         setVisitedQuestions(initialVisited);
-        setAppState(AppState.QUIZ);
+        
+        if (quizMode === 'JEE') {
+            setAppState(AppState.QUIZ_READY);
+        } else {
+            setAppState(AppState.QUIZ);
+        }
       } else {
         throw new Error('The AI could not generate a quiz from this file. It might be blank or have incompatible formatting.');
       }
@@ -615,6 +655,53 @@ export default function App() {
     return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // --- Full Screen Logic ---
+  const toggleFullScreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(err => {
+        console.error(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+      });
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleFullScreenChange = () => {
+      setIsFullScreen(!!document.fullscreenElement);
+    };
+    
+    document.addEventListener('fullscreenchange', handleFullScreenChange);
+    
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullScreenChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (key === 'f') {
+        toggleFullScreen();
+      }
+      // The 'Escape' key is handled natively by browsers to exit fullscreen.
+      // We explicitly listen for it here to make the functionality clear and robust.
+      if (key === 'escape' && document.fullscreenElement) {
+        document.exitFullscreen();
+      }
+    };
+
+    if (appState === AppState.QUIZ) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [appState, toggleFullScreen]);
+
   const ApiKeySetup: React.FC<{ onApiKeySubmit: (key: string) => void }> = ({ onApiKeySubmit }) => {
     const [localKey, setLocalKey] = useState('');
 
@@ -636,7 +723,7 @@ export default function App() {
             type="password"
             value={localKey}
             onChange={(e) => setLocalKey(e.target.value)}
-            placeholder="Enter your API key"
+            placeholder="AIzaSy... (example)"
             className="w-full px-4 py-3 mb-4 text-gray-800 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
             aria-label="API Key Input"
           />
@@ -791,6 +878,27 @@ export default function App() {
     </div>
   );
 
+  const handleEnterQuizFullScreen = () => {
+    document.documentElement.requestFullscreen().catch(err => {
+        console.error(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+    });
+    setAppState(AppState.QUIZ);
+  };
+
+  const renderQuizReadyState = () => (
+    <div className="w-full max-w-lg mx-auto bg-white rounded-2xl shadow-xl p-8 text-center flex flex-col items-center">
+        <h2 className="text-3xl font-bold text-gray-800 mb-4">Your Quiz is Ready!</h2>
+        <p className="text-gray-600 mb-8">
+            JEE Mode will start in a distraction-free full-screen environment.
+        </p>
+        <button
+            onClick={handleEnterQuizFullScreen}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-all transform hover:scale-105 shadow-lg hover:shadow-indigo-500/50"
+        >
+            Start Quiz
+        </button>
+    </div>
+  );
 
   const renderProcessingState = () => (
     <div className="flex flex-col items-center justify-center text-gray-800">
@@ -825,7 +933,12 @@ export default function App() {
             <div className="w-full h-screen max-w-screen-2xl mx-auto flex flex-col text-gray-800 p-2">
                 {/* Header */}
                 <header className="bg-white rounded-t-lg p-3 flex justify-between items-center border-b border-gray-200">
-                    <h1 className="text-xl font-bold">{quizMode === 'JEE' ? 'JEE Mode' : 'Practice Mode'}</h1>
+                    <div className="flex items-center gap-4">
+                        <h1 className="text-xl font-bold">{quizMode === 'JEE' ? 'JEE Mode' : 'Practice Mode'}</h1>
+                        <button onClick={toggleFullScreen} className="text-gray-500 hover:text-gray-800" title={isFullScreen ? "Exit Full Screen (f or Esc)" : "Enter Full Screen (f)"}>
+                          {isFullScreen ? <FullScreenExitIcon className="w-6 h-6" /> : <FullScreenEnterIcon className="w-6 h-6" />}
+                        </button>
+                    </div>
                     {quizMode === 'JEE' && (
                         <div className="text-right">
                             <p className="text-sm text-gray-500">Time Left</p>
@@ -1050,95 +1163,139 @@ export default function App() {
         const correctAnswers = answersForScoring.reduce((acc, answer, index) => (answer !== '' && answer === quiz[index].correctAnswer) ? acc + 1 : acc, 0);
         const incorrectAnswers = answeredQuestions - correctAnswers;
         const jeeScore = (correctAnswers * 4) - incorrectAnswers;
+        
+        const sourceFileName = inputFiles.length > 0 
+            ? inputFiles.map(f => f.name).join(', ').substring(0, 50) 
+            : 'Unknown File';
 
-        // --- Summary Page ---
-        doc.setFontSize(22);
+        // --- Cover Page ---
+        doc.setFontSize(24);
         doc.setFont('helvetica', 'bold');
-        doc.text('Quiz Results Summary', pageWidth / 2, y, { align: 'center' });
-        y += 15;
-
-        doc.setFontSize(12);
+        doc.text('Quiz Performance Report', pageWidth / 2, y, { align: 'center' });
+        y += 20;
+        
+        doc.setFontSize(14);
         doc.setFont('helvetica', 'normal');
+        doc.text(`Source File(s): ${sourceFileName}`, pageWidth / 2, y, { align: 'center' });
+        y += 10;
+        
+        doc.text(`Report Generated: ${new Date().toLocaleString()}`, pageWidth / 2, y, { align: 'center' });
+        y += 20;
+
+        // --- Summary Box ---
+        doc.setDrawColor(200, 200, 200);
+        doc.setFillColor(245, 245, 245);
+        doc.roundedRect(margin, y, pageWidth - margin * 2, 40, 3, 3, 'FD');
+        y += 10;
+        
+        doc.setFontSize(16);
+        doc.setFont('helvetica', 'bold');
         
         if (quizMode === 'JEE') {
-            doc.text(`Final JEE Score: ${jeeScore}`, margin, y); y += 7;
+            doc.text(`Final JEE Score: ${jeeScore}`, pageWidth / 2, y, { align: 'center' }); y += 10;
         } else {
             const percentage = answeredQuestions > 0 ? Math.round((correctAnswers / answeredQuestions) * 100) : 0;
-            doc.text(`Final Score: ${correctAnswers} / ${answeredQuestions} (${percentage}%)`, margin, y); y+=7;
+            doc.text(`Final Score: ${correctAnswers} / ${answeredQuestions} (${percentage}%)`, pageWidth / 2, y, { align: 'center' }); y += 10;
         }
-
-        doc.text(`Correct Answers: ${correctAnswers}`, margin, y); y += 7;
-        doc.text(`Incorrect Answers: ${incorrectAnswers}`, margin, y); y += 7;
-        doc.text(`Answered Questions: ${answeredQuestions} out of ${quiz.length}`, margin, y); y += 15;
         
-        doc.addPage();
-        y = margin;
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'normal');
+        doc.text(`Correct: ${correctAnswers} | Incorrect: ${incorrectAnswers} | Answered: ${answeredQuestions}/${quiz.length}`, pageWidth / 2, y, { align: 'center' });
+        y += 25; // Move below the box
 
         // --- Question Breakdown ---
+        doc.addPage();
+        y = margin;
+        
+        doc.setFontSize(18);
+        doc.setFont('helvetica', 'bold');
+        doc.text('Detailed Question Analysis', margin, y);
+        y += 10;
+
         for (let i = 0; i < quiz.length; i++) {
             const question = quiz[i];
-            
-            // Draw Question and Diagram
-            doc.setFontSize(11);
+            const userAnswer = answersForScoring[i];
+            const isCorrect = userAnswer === question.correctAnswer;
+
+            // Question Text
+            doc.setFontSize(12);
             doc.setFont('helvetica', 'bold');
             const questionTextLines = doc.splitTextToSize(`${i + 1}. ${question.question}`, pageWidth - margin * 2);
             checkPageBreak(questionTextLines.length * 5 + 10);
             doc.text(questionTextLines, margin, y);
             y += questionTextLines.length * 5 + 2;
 
+            // Diagram Image
             if (question.isDiagramBased && question.pageNumber && question.diagramBoundingBox) {
                 try {
                     const fullImageSrc = pageImages[question.pageNumber - 1];
                     const croppedSrc = await cropImage(fullImageSrc, question.diagramBoundingBox);
-                    
                     const img = new Image();
                     img.src = croppedSrc;
                     await new Promise(resolve => { img.onload = resolve });
-
                     const aspectRatio = img.width / img.height;
-                    const pdfImgWidth = 80;
+                    const pdfImgWidth = Math.min(80, pageWidth - margin * 2);
                     const pdfImgHeight = pdfImgWidth / aspectRatio;
-                    
                     checkPageBreak(pdfImgHeight + 5);
                     doc.addImage(croppedSrc, 'JPEG', margin, y, pdfImgWidth, pdfImgHeight);
                     y += pdfImgHeight + 5;
-                } catch (e) {
-                    console.error("Could not add image to PDF", e);
-                }
+                } catch (e) { console.error("Could not add image to PDF", e); }
             }
-
-            // Draw Answers
+            
+            // Options
             doc.setFontSize(10);
-            doc.setFont('helvetica', 'normal');
-            const userAnswer = answersForScoring[i];
-            const isCorrect = userAnswer === question.correctAnswer;
+            question.options.forEach((option, idx) => {
+                const prefix = `${optionLabels[idx]}) `;
+                
+                let textColor = '#000000'; // Black
+                if (option === userAnswer && !isCorrect) textColor = '#dc2626'; // Red
+                if (option === question.correctAnswer) textColor = '#16a34a'; // Green
+                
+                doc.setTextColor(textColor);
+                const optionLines = doc.splitTextToSize(prefix + option, pageWidth - margin * 2 - 5);
+                checkPageBreak(optionLines.length * 4 + 2);
+                doc.text(optionLines, margin + 5, y);
+                y += optionLines.length * 4 + 2;
+            });
 
-            const yourAnswerText = `Your Answer: ${userAnswer || "Not Answered"}`;
-            checkPageBreak(5);
-            doc.setTextColor(isCorrect ? '#16a34a' : '#dc2626');
-            doc.text(yourAnswerText, margin, y);
-            y += 5;
-
-            if (!isCorrect && userAnswer) {
-                const correctAnswerText = `Correct Answer: ${question.correctAnswer}`;
+            // Reset color
+            doc.setTextColor('#000000');
+            
+            // Result Summary
+            if (userAnswer) {
+              if (!isCorrect) {
+                  const summary = `Your Answer: ${userAnswer} (Incorrect)`;
+                  checkPageBreak(5);
+                  doc.setFont('helvetica', 'italic');
+                  doc.setTextColor('#dc2626');
+                  doc.text(summary, margin, y);
+                  y += 5;
+                  doc.setTextColor('#000000');
+              }
+            } else {
                 checkPageBreak(5);
-                doc.setTextColor('#0000FF');
-                doc.text(correctAnswerText, margin, y);
-                y += 5;
+                doc.setFont('helvetica', 'italic');
+                doc.setTextColor('#6b7280'); // Gray
+                doc.text('You did not answer this question.', margin, y);
+                y+=5;
+                doc.setTextColor('#000000');
             }
-            doc.setTextColor(0, 0, 0); // Reset color to black
 
             // Separator
             y += 5;
             checkPageBreak(5);
             if (i < quiz.length - 1) {
-              doc.setDrawColor(200, 200, 200);
+              doc.setDrawColor(220, 220, 220);
               doc.line(margin, y, pageWidth - margin, y);
               y += 5;
             }
         }
+        
+        const firstFileName = inputFiles[0]?.name.replace(/\.[^/.]+$/, "") || "quiz";
+        const additionalFilesInfo = inputFiles.length > 1 ? `_and_${inputFiles.length - 1}_more` : "";
+        const finalFileName = `result_${firstFileName}${additionalFilesInfo}.pdf`;
+        doc.save(finalFileName);
 
-        doc.save('quiz-results.pdf');
     } catch (err) {
         console.error("Failed to generate PDF:", err);
         setError("Sorry, there was an error creating the PDF.");
@@ -1246,6 +1403,8 @@ export default function App() {
     switch (appState) {
       case AppState.JEE_TIMER_SETUP:
         return renderJeeTimerSetupState();
+      case AppState.QUIZ_READY:
+        return renderQuizReadyState();
       case AppState.PROCESSING:
         return renderProcessingState();
       case AppState.QUIZ:
