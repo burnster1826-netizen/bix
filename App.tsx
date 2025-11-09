@@ -1231,7 +1231,7 @@ export default function App() {
             ? inputFiles.map(f => f.name).join(', ').substring(0, 50) 
             : 'Unknown File';
 
-        // --- Cover Page ---
+        // --- Cover Page / Summary ---
         doc.setFontSize(24);
         doc.setFont('helvetica', 'bold');
         doc.text('Quiz Performance Report', pageWidth / 2, y, { align: 'center' });
@@ -1314,8 +1314,8 @@ export default function App() {
                     const isUserAnswer = userAnswer?.includes(option);
                     const isCorrectAnswer = question.correctAnswers.includes(option);
 
-                    if (isCorrectAnswer) textColor = '#16a34a';
-                    if (isUserAnswer && !isCorrectAnswer) textColor = '#dc2626';
+                    if (isCorrectAnswer) textColor = '#16a34a'; // green
+                    if (isUserAnswer && !isCorrectAnswer) textColor = '#dc2626'; // red
                     
                     doc.setTextColor(textColor);
                     const optionLines = doc.splitTextToSize(prefix + option, pageWidth - margin * 2 - 5);
@@ -1327,7 +1327,6 @@ export default function App() {
 
             // Result Summary
             doc.setTextColor('#000000');
-            doc.setFont('helvetica', 'italic');
             const yourAnswerText = getAnswerLabelsAndText(question.options, userAnswer);
 
             if (userAnswer && userAnswer.length > 0) {
@@ -1335,20 +1334,26 @@ export default function App() {
               const resultColor = isCorrect ? '#16a34a' : '#dc2626';
               const resultText = isCorrect ? '(Correct)' : '(Incorrect)';
               
-              doc.setTextColor(resultColor);
               checkPageBreak(5);
-              doc.text(`Your Answer: ${yourAnswerText} ${resultText}`, margin, y);
+              doc.setFont('helvetica', 'normal');
+              doc.setTextColor(resultColor);
+              doc.text(`Your Answer: ${yourAnswerText}`, margin, y);
+              const yourAnswerWidth = doc.getTextWidth(`Your Answer: ${yourAnswerText}`);
+              doc.setFont('helvetica', 'bold');
+              doc.text(resultText, margin + yourAnswerWidth + 2, y);
               y += 5;
 
               if (!isCorrect) {
                   doc.setTextColor('#16a34a');
                   checkPageBreak(5);
+                  doc.setFont('helvetica', 'normal');
                   doc.text(`Correct Answer: ${getAnswerLabelsAndText(question.options, question.correctAnswers)}`, margin, y);
                   y += 5;
               }
             } else {
                 doc.setTextColor('#6b7280');
                 checkPageBreak(5);
+                doc.setFont('helvetica', 'normal');
                 doc.text('You did not answer this question.', margin, y);
                 y+=5;
                 doc.setTextColor('#16a34a');
@@ -1357,6 +1362,22 @@ export default function App() {
                 y += 5;
             }
             doc.setTextColor('#000000');
+            
+            // Explanation
+            if (question.explanation) {
+                y += 5;
+                checkPageBreak(10);
+                doc.setFontSize(10);
+                doc.setFont('helvetica', 'bold');
+                doc.text('Explanation:', margin, y);
+                y += 5;
+
+                doc.setFont('helvetica', 'normal');
+                const explanationLines = doc.splitTextToSize(question.explanation, pageWidth - margin * 2);
+                checkPageBreak(explanationLines.length * 4);
+                doc.text(explanationLines, margin, y);
+                y += explanationLines.length * 4;
+            }
 
             // Separator
             y += 5;
