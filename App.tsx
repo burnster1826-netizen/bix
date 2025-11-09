@@ -1,5 +1,6 @@
+
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { AppState, Question, QuizMode, QuestionStatus } from './types';
+import { AppState, Question, QuizMode, QuestionStatus, SavedQuiz, SavedFile } from './types';
 import { generateQuiz } from './services/geminiService';
 
 // This declaration is necessary because these libraries are loaded from a CDN.
@@ -31,8 +32,11 @@ const FullScreenExitIcon: React.FC<{className?: string}> = ({ className }) => (
   </svg>
 );
 
-const Spinner: React.FC = () => (
-    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
+const Spinner: React.FC<{message?: string}> = ({ message }) => (
+    <div className="flex flex-col items-center justify-center text-gray-800">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
+        {message && <p className="mt-4 text-lg font-medium">{message}</p>}
+    </div>
 );
 
 const optionLabels = ['A', 'B', 'C', 'D'];
@@ -87,7 +91,12 @@ export default function App() {
 
   // Full Screen State
   const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
-  
+
+  // Local Drive State
+  const [savedQuizzes, setSavedQuizzes] = useState<SavedQuiz[]>([]);
+  const [quizJustSaved, setQuizJustSaved] = useState<boolean>(false);
+
+
   // Paste handler
   const pasteHandler = useCallback((event: ClipboardEvent) => {
     handleFiles(event.clipboardData?.files ?? null);
@@ -103,6 +112,18 @@ export default function App() {
       window.removeEventListener('paste', pasteHandler);
     };
   }, [appState, pasteHandler]);
+
+  // Effect to load quizzes from local storage on startup
+  useEffect(() => {
+    try {
+      const storedQuizzes = localStorage.getItem('savedQuizzes');
+      if (storedQuizzes) {
+        setSavedQuizzes(JSON.parse(storedQuizzes));
+      }
+    } catch (error) {
+      console.error("Could not load quizzes from local storage:", error);
+    }
+  }, []);
 
   const areArraysEqual = (arr1: string[], arr2: string[]): boolean => {
     if (!arr1 || !arr2 || arr1.length !== arr2.length) return false;
@@ -136,6 +157,7 @@ export default function App() {
     setVisitedQuestions([]);
     setQuestionStatuses([]);
     setIsGeneratingPdf(false);
+    setQuizJustSaved(false);
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
     }
@@ -152,6 +174,7 @@ export default function App() {
     setStopwatchTime(0);
     setShowAnswer(false);
     setMarkedQuestions(new Array(quiz.length).fill(false));
+    setQuizJustSaved(false);
     
     const initialVisited = new Array(quiz.length).fill(false);
     initialVisited[0] = true;
@@ -355,7 +378,7 @@ export default function App() {
         **Key Instructions:**
         -   Focus on core principles, formulas, and problem-solving techniques.
         -   For multiple-choice questions, create plausible distractors that reflect common student errors.
-        -   Pay close attention to diagrams, graphs, and chemical structures. If a question relies on one, ensure 'isDiagramBased' is true and provide an accurate 'diagramBoundingBox'.
+        -   Pay close attention to diagrams, graphs, and chemical structures. If a question relies on one, ensure 'isDiagramBased' is true.
         -   Ensure numerical answers and options are precise and use correct scientific notation where appropriate.
 
         Generate two types of questions:
@@ -374,7 +397,7 @@ export default function App() {
         -   'explanation': A concise but thorough explanation, detailing the steps, formulas, or reasoning used to arrive at the correct answer.
         -   'pageNumber': The 1-indexed page the question is from.
         -   'isDiagramBased': A boolean, true if a visual element is essential for answering.
-        -   'diagramBoundingBox': If 'isDiagramBased' is true, provide normalized (0-1) coordinates for the relevant area (question + visual).
+        -   'diagramBoundingBox': If 'isDiagramBased' is true, provide normalized (0-1) coordinates for the visual element only, excluding the question text.
       `;
       
       parts.push({ text: basePrompt });
@@ -676,14 +699,71 @@ export default function App() {
     };
   }, [toggleFullScreen]);
 
+  // --- Local Drive Logic ---
+  const saveQuizToLocalDrive = () => {
+    if (!quiz || !inputFiles) return;
+
+    try {
+        const quizToSave: SavedQuiz = {
+            id: new Date().toISOString() + Math.random(), // simple unique ID
+            name: inputFiles.map(f => f.name).join(', ').substring(0, 100),
+            createdAt: new Date().toISOString(),
+            quiz: quiz,
+            pageImages: pageImages,
+            files: inputFiles.map(f => ({ name: f.name })),
+        };
+
+        const updatedQuizzes = [...savedQuizzes, quizToSave];
+        setSavedQuizzes(updatedQuizzes);
+        localStorage.setItem('savedQuizzes', JSON.stringify(updatedQuizzes));
+        setQuizJustSaved(true);
+
+    } catch (err: any) {
+        setError(`Failed to save quiz. Local storage might be full. Error: ${err.message}`);
+    }
+  };
+
+  const deleteQuizFromLocalDrive = (quizId: string) => {
+    if (window.confirm("Are you sure you want to delete this quiz?")) {
+      try {
+        const updatedQuizzes = savedQuizzes.filter(q => q.id !== quizId);
+        setSavedQuizzes(updatedQuizzes);
+        localStorage.setItem('savedQuizzes', JSON.stringify(updatedQuizzes));
+      } catch (err: any) {
+        setError(`Failed to delete quiz. Error: ${err.message}`);
+      }
+    }
+  };
+
+  const loadQuizFromDrive = (quizData: SavedQuiz) => {
+    setQuiz(quizData.quiz);
+    setPageImages(quizData.pageImages);
+    const mockFiles = quizData.files.map(f => new File([], f.name, { type: "application/pdf" }));
+    setInputFiles(mockFiles);
+
+    setUserAnswers(new Array(quizData.quiz.length).fill([]));
+    setSavedAnswers(new Array(quizData.quiz.length).fill(false));
+    setJeeSavedAnswers(new Array(quizData.quiz.length).fill([]));
+    setCurrentQuestionIndex(0);
+    setCroppedImage(null);
+    setQuizMode(null);
+    setTimer(null);
+    setTimeLeft(null);
+    setStopwatchTime(0);
+    setShowAnswer(false);
+    setMarkedQuestions(new Array(quizData.quiz.length).fill(false));
+    const initialVisited = new Array(quizData.quiz.length).fill(false);
+    initialVisited[0] = true;
+    setVisitedQuestions(initialVisited);
+    setQuestionStatuses(new Array(quizData.quiz.length).fill('notVisited'));
+    setAppState(AppState.IDLE);
+  };
+
   const renderIdleState = () => {
     return (
-    <div 
-      className="w-full max-w-4xl mx-auto rounded-2xl shadow-lg border border-gray-200 p-8 text-center flex flex-col items-center"
-      style={{backgroundColor: '#fffbe6'}}
-    >
+    <div className="w-full max-w-4xl mx-auto rounded-2xl shadow-lg border border-gray-200 p-8 text-center flex flex-col items-center" style={{backgroundColor: '#fffbe6'}}>
       {inputFiles.length > 0 ? (
-        <div className="w-full flex flex-col items-center">
+        <div className="w-full flex flex-col items-center mt-12">
           <p className="text-xl text-gray-800 mb-2 font-semibold break-words">
              Ready to generate a quiz for:
           </p>
@@ -713,7 +793,7 @@ export default function App() {
       ) : (
         <>
           <h1
-            className="text-6xl font-black mb-12 text-center"
+            className="text-6xl font-black mt-12 mb-12 text-center"
             style={{ color: '#FFC000', textShadow: '3px 3px 0px black' }}
           >
             quiz generater
@@ -733,12 +813,57 @@ export default function App() {
             </label>
             <input id="file-upload" type="file" accept=".pdf,image/png,image/jpeg,image/webp" className="hidden" onChange={handleFileChange} multiple />
           </div>
+          <button 
+            onClick={() => setAppState(AppState.DRIVE)} 
+            disabled={savedQuizzes.length === 0}
+            className="mt-8 bg-gray-700 hover:bg-gray-800 text-white font-bold py-2 px-6 rounded-lg transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed">
+                Open Drive ({savedQuizzes.length})
+          </button>
         </>
       )}
       {error && <p className="text-red-500 mt-4 font-semibold bg-red-100 p-3 rounded-lg whitespace-pre-line">{error}</p>}
     </div>
     );
   };
+  
+  const renderDriveState = () => (
+    <div className="w-full max-w-3xl mx-auto bg-white rounded-2xl shadow-xl p-8 text-gray-800">
+      <h2 className="text-3xl font-bold text-center mb-6">Saved Quizzes (Drive)</h2>
+      {savedQuizzes.length === 0 ? (
+        <p className="text-center text-gray-600">You have no saved quizzes yet.</p>
+      ) : (
+        <ul className="space-y-3 max-h-[60vh] overflow-y-auto pr-2">
+          {savedQuizzes.map(savedQuiz => (
+            <li key={savedQuiz.id} className="p-4 bg-gray-100 rounded-lg flex flex-col sm:flex-row justify-between items-start sm:items-center">
+              <div>
+                <p className="font-bold text-gray-800 break-all">{savedQuiz.name}</p>
+                <p className="text-xs text-gray-500">Saved on: {new Date(savedQuiz.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex gap-2 mt-3 sm:mt-0 flex-shrink-0">
+                <button
+                  onClick={() => loadQuizFromDrive(savedQuiz)}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm py-1.5 px-4 rounded-md transition-colors"
+                >
+                  Retest
+                </button>
+                <button
+                  onClick={() => deleteQuizFromLocalDrive(savedQuiz.id)}
+                  className="bg-red-600 hover:bg-red-700 text-white font-semibold text-sm py-1.5 px-4 rounded-md transition-colors"
+                >
+                  Delete
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="text-center mt-8">
+        <button onClick={() => setAppState(AppState.IDLE)} className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-8 rounded-lg transition-colors">
+          Back
+        </button>
+      </div>
+    </div>
+  );
 
   const renderJeeTimerSetupState = () => (
     <div className="w-full max-w-xl mx-auto bg-white rounded-2xl shadow-xl p-8 text-center flex flex-col items-center">
@@ -798,10 +923,7 @@ export default function App() {
   );
 
   const renderProcessingState = () => (
-    <div className="flex flex-col items-center justify-center text-gray-800">
-        <Spinner />
-        <p className="mt-4 text-lg font-medium">{loadingMessage}</p>
-    </div>
+      <Spinner message={loadingMessage} />
   );
   
   const renderQuizState = () => {
@@ -860,28 +982,30 @@ export default function App() {
                 <div className="flex flex-grow bg-gray-100 min-h-0">
                     {/* Left Panel: Question */}
                     <div className="w-3/4 p-6 flex flex-col overflow-y-auto">
-                        <div className="bg-white p-4 rounded-lg mb-4 border border-gray-200 flex justify-between items-center">
-                            <h2 className="text-lg font-semibold">Question No. {currentQuestionIndex + 1} of {quiz.length}</h2>
-                             {isNumerical ? (
-                                <span className="text-sm font-bold text-blue-600 bg-blue-100 px-3 py-1 rounded-full">Numerical Answer</span>
-                            ) : isMultipleAnswer && (
-                                <span className="text-sm font-bold text-rose-600 bg-rose-100 px-3 py-1 rounded-full">Multiple ans</span>
-                            )}
+                        <div className="flex items-center gap-4 mb-4">
+                            <h2 className="text-xl font-bold">Question {currentQuestionIndex + 1}:</h2>
+                            <div className="flex items-center gap-2">
+                                {quizMode === 'JEE' && <span className="text-sm font-medium bg-gray-200 text-gray-700 px-3 py-1 rounded-full">Marks: +4 -1</span>}
+                                {!isNumerical && (
+                                    <span className="text-sm font-medium bg-gray-200 text-gray-700 px-3 py-1 rounded-full">Type: {isMultipleAnswer ? 'Multiple' : 'Single'}</span>
+                                )}
+                            </div>
                         </div>
+
                         <div className="flex-grow space-y-5">
                             <p className="text-xl leading-relaxed">{currentQuestion.question}</p>
                             
-                            {isCropping && <div className="text-center p-4 text-gray-600">Extracting question context...</div>}
+                            {isCropping && <div className="text-center p-4 text-gray-600">Extracting diagram...</div>}
                             {croppedImage && !isCropping && (
-                                <div className="my-4 p-2 border rounded-lg bg-gray-50 flex flex-col items-center">
+                                <div className="my-4 flex flex-col items-center">
                                     <img 
-                                    src={croppedImage} 
-                                    alt="Question Context" 
-                                    className="rounded-md max-w-full h-auto max-h-80 object-contain cursor-pointer transition-transform hover:scale-105"
-                                    onClick={() => setShowFullImageModal(true)}
+                                        src={croppedImage} 
+                                        alt="Question Diagram" 
+                                        className="max-w-full h-auto object-contain cursor-pointer"
+                                        onClick={() => setShowFullImageModal(true)}
                                     />
                                     <button onClick={() => setShowFullImageModal(true)} className="text-sm text-blue-600 hover:underline mt-2">
-                                    View full page
+                                        View full page
                                     </button>
                                 </div>
                             )}
@@ -1307,6 +1431,15 @@ export default function App() {
             <StatCard label="Not Visited" value={notVisitedCount} color="#6b7280"/>
         </div>
 
+        {quizJustSaved && (
+            <div className="my-6 p-3 bg-blue-50 border border-blue-200 rounded-lg text-center">
+                <p className="font-semibold text-blue-800">Quiz saved to your Drive!</p>
+                <p className="text-xs text-gray-600">You can access it from the home screen.</p>
+            </div>
+        )}
+
+        {error && <p className="text-red-500 my-4 font-semibold text-center">{error}</p>}
+
         <div className="space-y-4 max-h-[40vh] overflow-y-auto pr-4 border-t pt-4">
           {quiz.map((question, index) => {
             const userAnswer = answersForScoring[index];
@@ -1349,9 +1482,16 @@ export default function App() {
           })}
         </div>
 
-        <div className="flex flex-col sm:flex-row justify-center items-center gap-4 mt-8">
+        <div className="flex flex-col sm:flex-row justify-center items-center gap-4 mt-8 relative">
           <button onClick={handleRetest} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-colors w-full sm:w-auto">
             Retest
+          </button>
+          <button 
+            onClick={saveQuizToLocalDrive} 
+            disabled={quizJustSaved}
+            className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-colors w-full sm:w-auto disabled:bg-teal-300 disabled:cursor-not-allowed"
+          >
+            {quizJustSaved ? 'Saved!' : 'Save to Drive'}
           </button>
           <button 
               onClick={handleDownloadPdf}
@@ -1370,6 +1510,8 @@ export default function App() {
 
   const renderContent = () => {
     switch (appState) {
+      case AppState.DRIVE:
+        return renderDriveState();
       case AppState.JEE_TIMER_SETUP:
         return renderJeeTimerSetupState();
       case AppState.QUIZ_READY:
@@ -1387,7 +1529,7 @@ export default function App() {
   };
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50 text-gray-800 flex items-center justify-center p-4">
+    <main className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50 text-gray-800 flex items-center justify-center p-4 relative">
       {renderContent()}
     </main>
   );

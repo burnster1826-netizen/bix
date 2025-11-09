@@ -1,3 +1,4 @@
+
 export interface Question {
   question: string;
   options?: string[];
@@ -13,6 +14,19 @@ export interface Question {
   };
 }
 
+export interface SavedFile {
+  name: string;
+}
+
+export interface SavedQuiz {
+  id: string; // Unique identifier for the quiz
+  name: string;
+  createdAt: string;
+  quiz: Question[];
+  pageImages: string[];
+  files: SavedFile[];
+}
+
 export enum AppState {
   IDLE,
   JEE_TIMER_SETUP,
@@ -20,6 +34,7 @@ export enum AppState {
   QUIZ_READY,
   QUIZ,
   RESULTS,
+  DRIVE, // Added state for viewing saved quizzes
 }
 
 export type QuizMode = 'PRACTICE' | 'JEE';
