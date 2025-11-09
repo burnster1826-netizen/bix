@@ -24,6 +24,10 @@ const quizSchema = {
         },
         description: "An array containing the correct answer(s). For multiple-choice, this contains the correct option text(s). For numerical questions, this contains a single string with the correct number."
       },
+      explanation: {
+        type: Type.STRING,
+        description: "A concise explanation of why the correct answer(s) are correct."
+      },
       isDiagramBased: {
         type: Type.BOOLEAN,
         description: "Set to true if the question refers to a diagram, chart, or image that is required to answer it. Default to false."
@@ -47,11 +51,8 @@ const quizSchema = {
   },
 };
 
-export const generateQuiz = async (parts: any[], apiKey: string): Promise<Question[] | null> => {
-  if (!apiKey) {
-    throw new Error("API Key is missing.");
-  }
-  const ai = new GoogleGenAI({ apiKey });
+export const generateQuiz = async (parts: any[]): Promise<Question[] | null> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",

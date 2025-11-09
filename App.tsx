@@ -51,26 +51,7 @@ const getAnswerLabelsAndText = (options: string[] | undefined, answers: string[]
     }).join(', ');
 };
 
-const SolutionFinder: React.FC<{ question: Question }> = ({ question }) => {
-    return (
-        <div className="mt-4 pt-3 border-t border-gray-200">
-            <p className="font-semibold text-xs mb-2 text-gray-500">SOLUTION</p>
-            <div className="flex flex-wrap gap-2 items-center">
-                <button
-                    onClick={() => window.open(`https://www.google.com/search?q=${encodeURIComponent(question.question)}`, '_blank')}
-                    className="bg-blue-100 text-blue-800 text-xs font-semibold px-3 py-1.5 rounded-full hover:bg-blue-200 transition-colors"
-                >
-                    Search on Google
-                </button>
-            </div>
-        </div>
-    );
-};
-
-
 export default function App() {
-  const [apiKey, setApiKey] = useState<string>('AIzaSyCKLekmwksDVVapvhhi1RQxR5cLjSj9Yjs');
-  const [isApiKeySet, setIsApiKeySet] = useState<boolean>(true);
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
   const [inputFiles, setInputFiles] = useState<File[]>([]);
   const [quiz, setQuiz] = useState<Question[] | null>(null);
@@ -106,11 +87,6 @@ export default function App() {
 
   // Full Screen State
   const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
-  
-  // Page range for PDF
-  const [startPage, setStartPage] = useState<string>('');
-  const [endPage, setEndPage] = useState<string>('');
-  const [pdfTotalPages, setPdfTotalPages] = useState<number | null>(null);
   
   // Paste handler
   const pasteHandler = useCallback((event: ClipboardEvent) => {
@@ -160,9 +136,6 @@ export default function App() {
     setVisitedQuestions([]);
     setQuestionStatuses([]);
     setIsGeneratingPdf(false);
-    setStartPage('');
-    setEndPage('');
-    setPdfTotalPages(null);
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
     }
@@ -250,11 +223,6 @@ export default function App() {
 
 
   const handleFiles = async (files: FileList | null) => {
-    // Reset page range state first
-    setStartPage('');
-    setEndPage('');
-    setPdfTotalPages(null);
-    
     if (!files || files.length === 0) {
       setInputFiles([]);
       return;
@@ -282,18 +250,6 @@ export default function App() {
       setError(errors.join('\n'));
     } else {
       setError(null);
-    }
-
-    if (validFiles.length === 1 && validFiles[0].type === 'application/pdf') {
-      try {
-        const typedArray = new Uint8Array(await validFiles[0].arrayBuffer());
-        const pdf = await pdfjsLib.getDocument(typedArray).promise;
-        setPdfTotalPages(pdf.numPages);
-      } catch (e) {
-        console.error("Failed to read PDF for page count:", e);
-        setError("Could not read the PDF file to determine the number of pages.");
-        setInputFiles([]); // Clear invalid file
-      }
     }
   };
 
@@ -331,16 +287,10 @@ export default function App() {
       return;
     }
 
-    if (!apiKey) {
-      setError('API Key is not set.');
-      setIsApiKeySet(false); // Go back to API key screen
-      return;
-    }
-
     setAppState(AppState.PROCESSING);
     setError(null);
 
-    const processFileToParts = async (fileToProcess: File, onProgress: (msg: string) => void, pageRange?: { start: number, end: number }): Promise<{ parts: any[], images: string[] }> => {
+    const processFileToParts = async (fileToProcess: File, onProgress: (msg: string) => void): Promise<{ parts: any[], images: string[] }> => {
         const fileParts: any[] = [];
         const fileImages: string[] = [];
 
@@ -348,27 +298,23 @@ export default function App() {
             onProgress(`Loading ${fileToProcess.name}...`);
             const typedArray = new Uint8Array(await fileToProcess.arrayBuffer());
             const pdf = await pdfjsLib.getDocument(typedArray).promise;
-
-            const startPageNum = pageRange?.start || 1;
-            const endPageNum = pageRange?.end || pdf.numPages;
-            const totalPagesToProcess = endPageNum - startPageNum + 1;
+            const totalPagesToProcess = pdf.numPages;
 
             const pagePromises = [];
-            for (let i = startPageNum; i <= endPageNum; i++) {
+            for (let i = 1; i <= totalPagesToProcess; i++) {
                 pagePromises.push(
                     (async (pageNum) => {
-                        const progressIndex = pageNum - startPageNum + 1;
-                        onProgress(`Analyzing page ${pageNum} (${progressIndex}/${totalPagesToProcess}) of ${fileToProcess.name}...`);
+                        onProgress(`Analyzing page ${pageNum} (${pageNum}/${totalPagesToProcess}) of ${fileToProcess.name}...`);
                         const page = await pdf.getPage(pageNum);
-                        const viewport = page.getViewport({ scale: 1.5 });
+                        const viewport = page.getViewport({ scale: 1.2 });
                         const canvas = document.createElement('canvas');
                         const context = canvas.getContext('2d');
                         if (!context) throw new Error("Could not create canvas context.");
                         canvas.height = viewport.height;
                         canvas.width = viewport.width;
                         await page.render({ canvasContext: context, viewport: viewport }).promise;
-                        const mimeType = 'image/jpeg';
-                        const quality = 0.9;
+                        const mimeType = 'image/webp';
+                        const quality = 0.8;
                         const base64Image = canvas.toDataURL(mimeType, quality).split(',')[1];
                         return { 
                             part: { inlineData: { data: base64Image, mimeType } }, 
@@ -404,51 +350,44 @@ export default function App() {
       let localPageImages: string[] = [];
       
       const basePrompt = `
-        You are an expert quiz creator. Analyze the document and generate a quiz. Create two types of questions:
+        You are an AI assistant specialized in creating high-quality quizzes for technical subjects like **Mathematics, Physics, and Chemistry**. Analyze the provided document and generate a challenging quiz that tests deep conceptual understanding and problem-solving skills.
+
+        **Key Instructions:**
+        -   Focus on core principles, formulas, and problem-solving techniques.
+        -   For multiple-choice questions, create plausible distractors that reflect common student errors.
+        -   Pay close attention to diagrams, graphs, and chemical structures. If a question relies on one, ensure 'isDiagramBased' is true and provide an accurate 'diagramBoundingBox'.
+        -   Ensure numerical answers and options are precise and use correct scientific notation where appropriate.
+
+        Generate two types of questions:
 
         1.  **Multiple-Choice Questions**:
-            -   Provide a 'question' text.
-            -   Provide an 'options' array with 4 choices.
-            -   Provide a 'correctAnswers' array with the correct option text(s).
+            -   'question': The question text, which may include formulas or chemical equations.
+            -   'options': An array with 4 choices.
+            -   'correctAnswers': An array with the correct option text(s).
 
-        2.  **Numerical-Answer Questions** (for questions with a specific number as an answer):
-            -   Provide a 'question' text.
-            -   Provide a 'correctAnswers' array containing a single string of the numerical answer (e.g., ["42.5"]).
-            -   **Crucially, you MUST OMIT the 'options' array or provide an empty \`[]\` for this question type.**
+        2.  **Numerical-Answer Questions** (for questions requiring a specific numerical answer):
+            -   'question': The question text.
+            -   'correctAnswers': An array containing a single string of the numerical answer (e.g., ["42.5"], ["-1.2e-3"]).
+            -   **Crucially, OMIT the 'options' array or provide an empty \`[]\` for this type.**
 
-        For ALL questions, you must also provide:
+        For **ALL** questions, you must provide:
+        -   'explanation': A concise but thorough explanation, detailing the steps, formulas, or reasoning used to arrive at the correct answer.
         -   'pageNumber': The 1-indexed page the question is from.
-        -   'isDiagramBased': A boolean, true if a diagram is needed to answer.
-        -   'diagramBoundingBox': If 'isDiagramBased' is true, provide normalized (0-1) coordinates for the relevant area.
+        -   'isDiagramBased': A boolean, true if a visual element is essential for answering.
+        -   'diagramBoundingBox': If 'isDiagramBased' is true, provide normalized (0-1) coordinates for the relevant area (question + visual).
       `;
       
       parts.push({ text: basePrompt });
-      
-      const numStartPage = startPage ? parseInt(startPage, 10) : null;
-      const numEndPage = endPage ? parseInt(endPage, 10) : null;
-
-      if (pdfTotalPages) { // This block only runs for a single PDF upload
-          const start = numStartPage || 1;
-          const end = numEndPage || pdfTotalPages;
-          if (start < 1 || end > pdfTotalPages || start > end) {
-              setError('Invalid page range selected. Please check the start and end pages.');
-              setAppState(AppState.IDLE);
-              return;
-          }
-      }
 
       for (const file of inputFiles) {
-        const pageRange = file.type === 'application/pdf' && pdfTotalPages 
-          ? { start: numStartPage || 1, end: numEndPage || pdfTotalPages } 
-          : undefined;
-        const fileResult = await processFileToParts(file, setLoadingMessage, pageRange);
+        const fileResult = await processFileToParts(file, setLoadingMessage);
         parts.push(...fileResult.parts);
         localPageImages.push(...fileResult.images);
       }
 
       setPageImages(localPageImages);
       setLoadingMessage('Generating your quiz with Gemini AI...');
-      generatedQuiz = await generateQuiz(parts, apiKey);
+      generatedQuiz = await generateQuiz(parts);
 
       if (generatedQuiz && generatedQuiz.length > 0) {
         setQuiz(generatedQuiz);
@@ -466,10 +405,10 @@ export default function App() {
             setAppState(AppState.QUIZ);
         }
       } else {
-        throw new Error('The AI could not generate a quiz from this file. It might be blank, have incompatible formatting, or the API key may be invalid.');
+        throw new Error('The AI could not generate a quiz from this file. It might be blank or have incompatible formatting.');
       }
     } catch (err: any) {
-      setError(err.message || 'An unexpected error occurred. Please check your API key and try again.');
+      setError(err.message || 'An unexpected error occurred. Please try again.');
       setAppState(AppState.IDLE);
     }
   };
@@ -737,50 +676,6 @@ export default function App() {
     };
   }, [toggleFullScreen]);
 
-  const renderApiKeyInputState = () => {
-    return (
-      <div className="w-full max-w-lg mx-auto bg-white rounded-2xl shadow-xl p-8 text-center flex flex-col items-center">
-        <h2 className="text-3xl font-bold text-gray-800 mb-4">Enter API Key</h2>
-        <p className="text-gray-600 mb-6">
-          A default API key has been provided. You can replace it with your own Google AI Studio API key if you wish.
-        </p>
-        <input
-          type="password"
-          value={apiKey}
-          onChange={(e) => {
-            setApiKey(e.target.value);
-            setError(null);
-          }}
-          className="w-full px-4 py-3 text-gray-800 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors mb-4"
-          placeholder="Your API Key"
-          aria-label="API Key Input"
-        />
-        {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
-        <button
-          onClick={() => {
-            if (apiKey.trim()) {
-              setIsApiKeySet(true);
-              setError(null);
-            } else {
-              setError("API Key cannot be empty.");
-            }
-          }}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-all transform hover:scale-105"
-        >
-          Save and Continue
-        </button>
-        <a
-          href="https://aistudio.google.com/app/apikey"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-sm text-indigo-600 hover:underline mt-4"
-        >
-          Get your own API Key from Google AI Studio
-        </a>
-      </div>
-    );
-  };
-
   const renderIdleState = () => {
     return (
     <div 
@@ -796,46 +691,6 @@ export default function App() {
             {inputFiles.map((file, index) => <span key={index}>{file.name}</span>)}
           </div>
           
-          {inputFiles.length === 1 && inputFiles[0].type === 'application/pdf' && pdfTotalPages && (
-            <div className="my-6 p-4 bg-indigo-50 rounded-lg w-full max-w-md border border-indigo-200">
-                <p className="text-sm font-semibold text-gray-800 mb-3 text-center">
-                    Generate quiz from a specific page range (optional)
-                </p>
-                <div className="flex items-center justify-center gap-4">
-                    <div className="flex-1">
-                        <label htmlFor="start-page" className="block text-xs text-gray-600 mb-1">Start Page</label>
-                        <input
-                            id="start-page"
-                            type="number"
-                            value={startPage}
-                            onChange={(e) => setStartPage(e.target.value)}
-                            placeholder={`1`}
-                            min="1"
-                            max={pdfTotalPages}
-                            className="w-full px-3 py-2 text-gray-800 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                            aria-label="Start Page"
-                        />
-                    </div>
-                    <span className="text-gray-500 font-semibold pt-5">to</span>
-                    <div className="flex-1">
-                        <label htmlFor="end-page" className="block text-xs text-gray-600 mb-1">End Page</label>
-                        <input
-                            id="end-page"
-                            type="number"
-                            value={endPage}
-                            onChange={(e) => setEndPage(e.target.value)}
-                            placeholder={`${pdfTotalPages}`}
-                            min="1"
-                            max={pdfTotalPages}
-                            className="w-full px-3 py-2 text-gray-800 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                            aria-label="End Page"
-                        />
-                    </div>
-                </div>
-                <p className="text-xs text-center text-gray-500 mt-2">Leave blank to use all {pdfTotalPages} pages.</p>
-            </div>
-          )}
-
           <p className="text-gray-700 mb-6">Choose your quiz mode:</p>
           <div className="flex flex-col sm:flex-row justify-center gap-4">
               <button
@@ -881,11 +736,6 @@ export default function App() {
         </>
       )}
       {error && <p className="text-red-500 mt-4 font-semibold bg-red-100 p-3 rounded-lg whitespace-pre-line">{error}</p>}
-      <div className="w-full text-center mt-6">
-          <button onClick={() => setIsApiKeySet(false)} className="text-xs text-gray-500 hover:text-indigo-600 font-semibold transition-colors">
-            Change API Key
-          </button>
-      </div>
     </div>
     );
   };
@@ -1091,6 +941,25 @@ export default function App() {
                                     })
                                 )}
                             </div>
+                            {quizMode === 'PRACTICE' && showAnswer && (
+                                <div className="mt-6 pt-4 border-t border-gray-200">
+                                    {currentQuestion.explanation && (
+                                        <div className="mb-4">
+                                            <p className="font-semibold text-xs mb-1 text-gray-500">EXPLANATION</p>
+                                            <p className="text-sm text-gray-700 leading-relaxed p-4 bg-yellow-50 border-l-4 border-yellow-400 rounded-r-lg">{currentQuestion.explanation}</p>
+                                        </div>
+                                    )}
+                                    <div>
+                                        <p className="font-semibold text-xs mb-2 text-gray-500">SOLUTION</p>
+                                        <button
+                                            onClick={() => window.open(`https://www.google.com/search?q=${encodeURIComponent(currentQuestion.question)}`, '_blank')}
+                                            className="bg-blue-100 text-blue-800 text-xs font-semibold px-3 py-1.5 rounded-full hover:bg-blue-200 transition-colors"
+                                        >
+                                            Search on Google
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                         <div className="border-t border-gray-300 mt-6 pt-4 flex items-center justify-between">
                             {quizMode === 'PRACTICE' ? (
@@ -1442,16 +1311,39 @@ export default function App() {
           {quiz.map((question, index) => {
             const userAnswer = answersForScoring[index];
             const isCorrect = areArraysEqual(userAnswer, question.correctAnswers);
+            const isAnswered = userAnswer && userAnswer.length > 0;
 
             return (
-              <div key={index} className={`p-4 rounded-lg border ${!userAnswer || userAnswer.length === 0 ? 'bg-gray-50 border-gray-200' : isCorrect ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+              <div key={index} className={`p-4 rounded-lg border ${!isAnswered ? 'bg-gray-50 border-gray-200' : isCorrect ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
                 <p className="font-semibold text-lg mb-2">{index + 1}. {question.question}</p>
-                <p className={`text-sm font-medium ${isCorrect ? 'text-green-700' : 'text-red-700'}`}>
+                <p className={`text-sm font-medium ${!isAnswered ? 'text-gray-600' : isCorrect ? 'text-green-700' : 'text-red-700'}`}>
                   Your answer: {getAnswerLabelsAndText(question.options, userAnswer)}
                 </p>
-                {!isCorrect && userAnswer && userAnswer.length > 0 && <p className="text-sm font-medium text-blue-700">Correct answer: {getAnswerLabelsAndText(question.options, question.correctAnswers)}</p>}
+                {!isCorrect && (
+                  <p className="text-sm font-medium text-blue-700 mt-1">
+                    Correct answer: {getAnswerLabelsAndText(question.options, question.correctAnswers)}
+                  </p>
+                )}
                 
-                <SolutionFinder question={question} />
+                <div className="mt-4 pt-3 border-t border-gray-200">
+                  {question.explanation && (
+                    <div className="mb-4">
+                      <p className="font-semibold text-xs mb-1 text-gray-500">EXPLANATION</p>
+                      <p className="text-sm text-gray-700 leading-relaxed">{question.explanation}</p>
+                    </div>
+                  )}
+                  <div>
+                    <p className="font-semibold text-xs mb-2 text-gray-500">SOLUTION</p>
+                    <div className="flex flex-wrap gap-2 items-center">
+                        <button
+                            onClick={() => window.open(`https://www.google.com/search?q=${encodeURIComponent(question.question)}`, '_blank')}
+                            className="bg-blue-100 text-blue-800 text-xs font-semibold px-3 py-1.5 rounded-full hover:bg-blue-200 transition-colors"
+                        >
+                            Search on Google
+                        </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             );
           })}
@@ -1477,9 +1369,6 @@ export default function App() {
   };
 
   const renderContent = () => {
-    if (!isApiKeySet) {
-      return renderApiKeyInputState();
-    }
     switch (appState) {
       case AppState.JEE_TIMER_SETUP:
         return renderJeeTimerSetupState();
