@@ -8,6 +8,21 @@ declare const pdfjsLib: any;
 declare const jspdf: any;
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
 
+// FIX: The global declaration for `window.aistudio` was conflicting with another
+// declaration. Using a named interface `AIStudio` as suggested by the error message
+// resolves the type mismatch. The previous anonymous type was not compatible with
+// the `AIStudio` type used in another (likely ambient) declaration.
+interface AIStudio {
+  hasSelectedApiKey: () => Promise<boolean>;
+  openSelectKey: () => Promise<void>;
+}
+
+declare global {
+  interface Window {
+    aistudio: AIStudio;
+  }
+}
+
 const FileUploadIcon: React.FC<{className?: string}> = ({ className }) => (
   <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
     <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l-3.75 3.75M12 9.75l3.75 3.75M3 17.25V6.75a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 6.75v10.5a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 17.25z" />
@@ -95,6 +110,42 @@ export default function App() {
   // Local Drive State
   const [savedQuizzes, setSavedQuizzes] = useState<SavedQuiz[]>([]);
   const [quizJustSaved, setQuizJustSaved] = useState<boolean>(false);
+
+  // API Key State
+  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const checkApiKey = async () => {
+        if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
+            try {
+                const keyStatus = await window.aistudio.hasSelectedApiKey();
+                setHasApiKey(keyStatus);
+            } catch (e) {
+                console.error("Error checking for API key:", e);
+                setHasApiKey(true); // Failsafe
+            }
+        } else {
+            console.warn("window.aistudio not found, assuming API key is set.");
+            setHasApiKey(true); 
+        }
+    };
+    checkApiKey();
+  }, []);
+
+  const handleChangeApiKey = async () => {
+    if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
+        try {
+            await window.aistudio.openSelectKey();
+            setHasApiKey(true); // Assume success to avoid race conditions
+            setError(null); // Clear previous API key errors
+        } catch(e) {
+            console.error("Error opening API key selection:", e);
+            setError("Could not open the API key selection dialog.");
+        }
+    } else {
+        setError("API key selection is not available in this environment.");
+    }
+  };
 
 
   // Paste handler
@@ -428,10 +479,17 @@ export default function App() {
             setAppState(AppState.QUIZ);
         }
       } else {
-        throw new Error('The AI could not generate a quiz from this file. It might be blank or have incompatible formatting.');
+        setError('The AI could not generate a quiz from this file. It might be blank, have incompatible formatting, or the content may not be suitable for quiz generation.');
+        setAppState(AppState.IDLE);
       }
     } catch (err: any) {
-      setError(err.message || 'An unexpected error occurred. Please try again.');
+      const errorMessage = err.message || 'An unexpected error occurred.';
+      if (errorMessage.includes('API key not valid') || errorMessage.includes('Requested entity was not found')) {
+          setError('Your API key appears to be invalid. Please select a valid key to continue.');
+          setHasApiKey(false);
+      } else {
+          setError(`An error occurred during quiz generation: ${errorMessage}`);
+      }
       setAppState(AppState.IDLE);
     }
   };
@@ -813,12 +871,19 @@ export default function App() {
             </label>
             <input id="file-upload" type="file" accept=".pdf,image/png,image/jpeg,image/webp" className="hidden" onChange={handleFileChange} multiple />
           </div>
-          <button 
-            onClick={() => setAppState(AppState.DRIVE)} 
-            disabled={savedQuizzes.length === 0}
-            className="mt-8 bg-gray-700 hover:bg-gray-800 text-white font-bold py-2 px-6 rounded-lg transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed">
-                Open Drive ({savedQuizzes.length})
-          </button>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-8">
+            <button 
+                onClick={() => setAppState(AppState.DRIVE)} 
+                disabled={savedQuizzes.length === 0}
+                className="bg-gray-700 hover:bg-gray-800 text-white font-bold py-2 px-6 rounded-lg transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed w-full sm:w-auto">
+                    Open Drive ({savedQuizzes.length})
+            </button>
+            <button 
+                onClick={handleChangeApiKey} 
+                className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-6 rounded-lg transition-colors w-full sm:w-auto">
+                    Change API Key
+            </button>
+          </div>
         </>
       )}
       {error && <p className="text-red-500 mt-4 font-semibold bg-red-100 p-3 rounded-lg whitespace-pre-line">{error}</p>}
@@ -1436,122 +1501,98 @@ export default function App() {
         <h2 className="text-3xl font-bold text-center mb-2">Quiz Completed!</h2>
         
         {quizMode === 'JEE' ? (
-          <p className="text-center text-xl text-gray-600 mb-6">
-            Your JEE Mode Score is <span className="text-purple-600 font-bold">{jeeScore}</span>
-          </p>
+          <div className="text-center mb-6">
+            <p className="text-lg text-gray-600">Your JEE Mode Score</p>
+            <p className="text-6xl font-black text-indigo-600">{jeeScore}</p>
+          </div>
         ) : (
-          <p className="text-center text-xl text-gray-600 mb-6">
-            You scored <span className="text-purple-600 font-bold">{correctAnswers}</span> out of <span className="text-purple-600 font-bold">{answeredQuestions}</span> ({percentage}%)
-          </p>
-        )}
-        
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-            <StatCard label="Correct Answers" value={correctAnswers} color="#16a34a"/>
-            <StatCard label="Incorrect Answers" value={incorrectAnswers} color="#dc2626"/>
-            <StatCard label="Marked for Review" value={markedForReviewCount} color="#9333ea"/>
-            <StatCard label="Not Visited" value={notVisitedCount} color="#6b7280"/>
-        </div>
-
-        {quizJustSaved && (
-            <div className="my-6 p-3 bg-blue-50 border border-blue-200 rounded-lg text-center">
-                <p className="font-semibold text-blue-800">Quiz saved to your Drive!</p>
-                <p className="text-xs text-gray-600">You can access it from the home screen.</p>
-            </div>
+          <div className="text-center mb-6">
+            <p className="text-lg text-gray-600">Your Score</p>
+            <p className="text-6xl font-black text-indigo-600">{percentage}%</p>
+            <p className="text-xl text-gray-700 font-semibold">{correctAnswers} / {answeredQuestions} answered correctly</p>
+          </div>
         )}
 
-        {error && <p className="text-red-500 my-4 font-semibold text-center">{error}</p>}
-
-        <div className="space-y-4 max-h-[40vh] overflow-y-auto pr-4 border-t pt-4">
-          {quiz.map((question, index) => {
-            const userAnswer = answersForScoring[index];
-            const isCorrect = areArraysEqual(userAnswer, question.correctAnswers);
-            const isAnswered = userAnswer && userAnswer.length > 0;
-
-            return (
-              <div key={index} className={`p-4 rounded-lg border ${!isAnswered ? 'bg-gray-50 border-gray-200' : isCorrect ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                <p className="font-semibold text-lg mb-2">{index + 1}. {question.question}</p>
-                <p className={`text-sm font-medium ${!isAnswered ? 'text-gray-600' : isCorrect ? 'text-green-700' : 'text-red-700'}`}>
-                  Your answer: {getAnswerLabelsAndText(question.options, userAnswer)}
-                </p>
-                {!isCorrect && (
-                  <p className="text-sm font-medium text-blue-700 mt-1">
-                    Correct answer: {getAnswerLabelsAndText(question.options, question.correctAnswers)}
-                  </p>
-                )}
-                
-                <div className="mt-4 pt-3 border-t border-gray-200">
-                  {question.explanation && (
-                    <div className="mb-4">
-                      <p className="font-semibold text-xs mb-1 text-gray-500">EXPLANATION</p>
-                      <p className="text-sm text-gray-700 leading-relaxed">{question.explanation}</p>
-                    </div>
-                  )}
-                  <div>
-                    <p className="font-semibold text-xs mb-2 text-gray-500">SOLUTION</p>
-                    <div className="flex flex-wrap gap-2 items-center">
-                        <button
-                            onClick={() => window.open(`https://www.google.com/search?q=${encodeURIComponent(question.question)}`, '_blank')}
-                            className="bg-blue-100 text-blue-800 text-xs font-semibold px-3 py-1.5 rounded-full hover:bg-blue-200 transition-colors"
-                        >
-                            Search on Google
-                        </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 my-8">
+          <StatCard label="Correct Answers" value={correctAnswers} color="#16a34a" />
+          <StatCard label="Incorrect Answers" value={incorrectAnswers} color="#dc2626" />
+          <StatCard label="Not Answered" value={quiz.length - answeredQuestions} color="#6b7280" />
+          <StatCard label="Total Questions" value={quiz.length} color="#1e293b" />
         </div>
 
-        <div className="flex flex-col sm:flex-row justify-center items-center gap-4 mt-8 relative">
-          <button onClick={handleRetest} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-colors w-full sm:w-auto">
+        <div className="mt-8 flex flex-col sm:flex-row justify-center items-center gap-4">
+          <button
+            onClick={handleRetest}
+            className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg transition-colors text-lg"
+          >
             Retest
           </button>
           <button 
-            onClick={saveQuizToLocalDrive} 
-            disabled={quizJustSaved}
-            className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-colors w-full sm:w-auto disabled:bg-teal-300 disabled:cursor-not-allowed"
+            onClick={handleDownloadPdf}
+            disabled={isGeneratingPdf}
+            className="w-full sm:w-auto bg-gray-700 hover:bg-gray-800 text-white font-bold py-3 px-6 rounded-lg transition-colors text-lg disabled:bg-gray-400"
           >
-            {quizJustSaved ? 'Saved!' : 'Save to Drive'}
+            {isGeneratingPdf ? 'Generating PDF...' : 'Download Report'}
           </button>
           <button 
-              onClick={handleDownloadPdf}
-              disabled={isGeneratingPdf}
-              className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-colors w-full sm:w-auto disabled:bg-green-300 disabled:cursor-wait"
-          >
-              {isGeneratingPdf ? 'Generating PDF...' : 'Download Results (PDF)'}
-          </button>
-          <button onClick={resetState} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-colors w-full sm:w-auto">
-            Try Another File
+              onClick={saveQuizToLocalDrive}
+              disabled={quizJustSaved}
+              className="w-full sm:w-auto bg-green-600 hover:bg-green-700 disabled:bg-green-400 disabled:cursor-not-allowed text-white font-bold py-3 px-6 rounded-lg transition-colors text-lg">
+                  {quizJustSaved ? 'Saved to Drive!' : 'Save to Drive'}
           </button>
         </div>
+        
+        <div className="text-center mt-6">
+          <button onClick={resetState} className="text-gray-500 hover:text-indigo-600 font-semibold transition-colors">
+            Back to Home
+          </button>
+        </div>
+        
+        {error && <p className="text-red-500 mt-4 text-center">{error}</p>}
       </div>
     );
   };
+  
+  if (hasApiKey === null) {
+    return (
+        <div className="w-full h-screen flex items-center justify-center bg-[#F7F8FC]">
+            <Spinner message="Checking API Key..." />
+        </div>
+    );
+  }
 
-  const renderContent = () => {
-    switch (appState) {
-      case AppState.DRIVE:
-        return renderDriveState();
-      case AppState.JEE_TIMER_SETUP:
-        return renderJeeTimerSetupState();
-      case AppState.QUIZ_READY:
-        return renderQuizReadyState();
-      case AppState.PROCESSING:
-        return renderProcessingState();
-      case AppState.QUIZ:
-        return renderQuizState();
-      case AppState.RESULTS:
-        return renderResultsState();
-      case AppState.IDLE:
-      default:
-        return renderIdleState();
-    }
-  };
+  if (hasApiKey === false) {
+      return (
+          <div className="w-full h-screen flex items-center justify-center bg-[#F7F8FC] p-4">
+              <div className="w-full max-w-md mx-auto bg-white rounded-2xl shadow-xl p-8 text-center flex flex-col items-center">
+                  <h2 className="text-2xl font-bold text-gray-800 mb-4">API Key Required</h2>
+                  <p className="text-gray-600 mb-6">
+                      To generate quizzes, you need to select a Google AI Studio API key.
+                  </p>
+                  <button
+                      onClick={handleChangeApiKey}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-all transform hover:scale-105"
+                  >
+                      Select API Key
+                  </button>
+                   {error && <p className="text-red-500 mt-4 font-semibold bg-red-100 p-3 rounded-lg">{error}</p>}
+                  <p className="text-xs text-gray-500 mt-4">
+                      Ensure your project has billing enabled. For more information, visit <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Gemini API billing documentation</a>.
+                  </p>
+              </div>
+          </div>
+      );
+  }
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50 text-gray-800 flex items-center justify-center p-4 relative">
-      {renderContent()}
+    <main className="w-full min-h-screen flex items-center justify-center p-4">
+      {appState === AppState.IDLE && renderIdleState()}
+      {appState === AppState.DRIVE && renderDriveState()}
+      {appState === AppState.JEE_TIMER_SETUP && renderJeeTimerSetupState()}
+      {appState === AppState.QUIZ_READY && renderQuizReadyState()}
+      {appState === AppState.PROCESSING && renderProcessingState()}
+      {appState === AppState.QUIZ && renderQuizState()}
+      {appState === AppState.RESULTS && renderResultsState()}
     </main>
   );
 }
