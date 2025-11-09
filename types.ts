@@ -40,3 +40,9 @@ export enum AppState {
 export type QuizMode = 'PRACTICE' | 'JEE';
 
 export type QuestionStatus = 'answered' | 'notAnswered' | 'marked' | 'answeredAndMarked' | 'notVisited';
+
+// Fix: Moved AIStudio interface to this shared types file to resolve global declaration conflicts in App.tsx.
+export interface AIStudio {
+  hasSelectedApiKey: () => Promise<boolean>;
+  openSelectKey: () => Promise<void>;
+}
